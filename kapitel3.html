@@ -4512,6 +4512,19 @@ function dick(x1, y1, x2, y2, col) { linie(x1, y1, x2, y2, col); linie(x1, y1 + 
 function scheibe(cx, cy, r, col) {
   for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) if (x * x + y * y <= r * r + 1) Screen.px(cx + x, cy + y, col);
 }
+/* Rundes Tempo-Schild, weiß mit rotem Rand. Eine Ziffer ('2') passt in den kleinen Kreis, eine Kommazahl
+   ('0,5') bekommt einen entsprechend größeren; Ziffern und Komma stehen dort eng beieinander. */
+function tempoSchild(cx, cy, text) {
+  if (text.length === 1) {
+    scheibe(cx, cy, 7, WHITE); scheibe(cx, cy, 6, LTRED); scheibe(cx, cy, 4, WHITE);
+    Screen.glyph(text, cx - 3, cy - 4, BLACK); return;
+  }
+  scheibe(cx, cy, 15, WHITE); scheibe(cx, cy, 14, LTRED); scheibe(cx, cy, 11, WHITE);
+  const teile = text.split(',');
+  Screen.glyph(teile[0], cx - 10, cy - 4, BLACK);
+  Screen.rect(cx - 2, cy + 2, 2, 2, BLACK); Screen.px(cx - 2, cy + 4, BLACK);
+  Screen.glyph(teile[1] || '', cx + 1, cy - 4, BLACK);
+}
 
 /* Fels: Stufen der Steinreihe, mit schrägen Schichten */
 function fels(x0, y0, w, h, hell) {
@@ -5149,8 +5162,7 @@ function bgStrecke(t) {
     for (let i = 0; i < 4; i++) balken(212 + i * 8, FIRSTE + 4, 8, 56, i % 2 ? 0.45 : 0.6);
     Screen.rect(212, FIRSTE + 18, 32, 2, STEIN[3]); Screen.rect(212, FIRSTE + 44, 32, 2, STEIN[3]);
     Screen.rect(240, FIRSTE + 30, 2, 5, STEIN[4]);
-    scheibe(228, FIRSTE - 9, 7, WHITE); scheibe(228, FIRSTE - 9, 6, LTRED); scheibe(228, FIRSTE - 9, 4, WHITE);
-    Screen.glyph('2', 225, FIRSTE - 13, BLACK);
+    { const tx = ekZahl(EK_FAHRT.vTuer); tempoSchild(228, tx.length === 1 ? FIRSTE - 9 : FIRSTE - 19, tx); }   // Tempo an der Wettertür
     // Schaufel, Eimer, Pfütze
     linie(120, SOHLE + 1, 125, SOHLE - 18, HOLZ[4]); Screen.rect(117, SOHLE - 3, 6, 5, STEIN[4]);
     Screen.rect(136, SOHLE - 6, 7, 7, STEIN[3]); Screen.rect(136, SOHLE - 6, 7, 1, STEIN[4]);
@@ -8547,11 +8559,8 @@ function renderFahrt(t, em) {
   Screen.rect(dx - 3, 50, 3, 40, HOLZ[2]); Screen.rect(dx + 14, 50, 3, 40, HOLZ[2]); Screen.rect(dx - 4, 48, 22, 3, HOLZ[3]);
   if (!auf) for (let i = 0; i < 2; i++) Screen.rect(dx + i * 7, 52, 6, 37, HOLZ[i ? 3 : 4]);
   else Screen.rect(dx + 11, 52, 3, 37, HOLZ[4]);
-  if (F.vTuer >= 1) { scheibe(dx + 6, 43, 6, WHITE); scheibe(dx + 6, 43, 5, LTRED); scheibe(dx + 6, 43, 3, WHITE); Screen.glyph(String(F.vTuer), dx + 3, 40, BLACK); }
-  else {                                            // Schild mit Kommazahl: breiter
-    Screen.rect(dx - 17, 38, 28, 11, LTRED); Screen.rect(dx - 16, 39, 26, 9, WHITE);     // links der Tür, der Tacho steht rechts
-    Screen.textPx(ekZahl(F.vTuer), dx - 15, 40, BLACK);
-  }
+  // Tempo-Schild: eine Ziffer über der Tür, eine Kommazahl groß an der Wand links neben der Tür
+  { const tx = ekZahl(F.vTuer); if (tx.length === 1) tempoSchild(dx + 6, 43, tx); else tempoSchild(dx - 22, 59, tx); }
   if (em.knall > 0) Screen.textPx('RUMMS!', dx - 20, 56, LTRED);
   // Mandy schiebt den Hunt
   const hx = X(em.s), step = em.v > 0.1 ? Math.floor(t * 8) % 2 : 0;
