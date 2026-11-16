@@ -7,9 +7,9 @@
    kommt sie aus dem Speicher. Vorher kam alles zuerst aus dem Speicher: Nach einem
    Upload spielte man beim ersten Aufruf noch die alte Fassung.
    Neue Fassung = neue VERSION, dann raeumt der Worker den alten Speicher weg. */
-const VERSION = 'fab-2026-11-17-k3-f5e16a3b';
+const VERSION = 'fab-2026-11-17-k123-798c8e5b';
 const DATEIEN = [
-  './', './index.html', './kapitel1.html', './kapitel2.html', './kapitel3.html', './kapitel4.html', './kapitel5.html',
+  './', './index.html', './kapitel1.html', './kapitel2.html', './kapitel3.html',
   './steigerbuch_k3.pdf', './auswertung.html',
   './manifest.webmanifest', './icon-192.png', './icon-512.png',
   './apple-touch-icon.png', './favicon.png'
@@ -18,8 +18,11 @@ const GEDULD = 3000;      // Millisekunden, bis statt des Servers der Speicher a
 
 self.addEventListener('install', e => {
   // cache: 'reload' - am Zwischenspeicher des Browsers vorbei, sonst landet dort Abgelegtes im neuen Speicher
+  // Jede Datei einzeln: Fehlt eine im Repo (ein Kapitel ist noch nicht hochgeladen), darf das den neuen Worker
+  // nicht aufhalten. Mit addAll scheiterte sonst die ganze Installation, und die Geraete blieben fuer immer
+  // bei der alten Fassung (so geschehen am 2026-11-17: kapitel4.html und kapitel5.html lagen nicht im Repo).
   e.waitUntil(caches.open(VERSION)
-    .then(c => c.addAll(DATEIEN.map(u => new Request(u, { cache: 'reload' }))))
+    .then(c => Promise.all(DATEIEN.map(u => c.add(new Request(u, { cache: 'reload' })).catch(() => {}))))
     .then(() => self.skipWaiting()));
 });
 
