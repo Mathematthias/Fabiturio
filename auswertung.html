@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F'Abiturio - Auswertung für Lehrkräfte</title>
+<link rel="icon" href="favicon.png">
+<style>
+  :root { --gruen:#9ae29b; --gelb:#c9d487; --grau:#adadad; --dgrau:#626262; --lila:#50459b; --rot:#cb7e75; }
+  html,body { margin:0; background:#000; color:var(--grau); font-family:ui-monospace,Menlo,Consolas,monospace; line-height:1.5; }
+  main { max-width:1500px; margin:0 auto; padding:20px 16px 48px; }
+  h1 { color:var(--gruen); font-size:20px; margin:0 0 4px; }
+  h2 { color:var(--gruen); font-size:15px; margin:26px 0 8px; }
+  p { margin:0 0 10px; font-size:13px; }
+  a { color:var(--gelb); }
+  textarea { width:100%; height:150px; box-sizing:border-box; background:#0b0b14; color:var(--gelb); border:2px solid var(--lila); padding:8px; font:inherit; font-size:13px; }
+  button { font:inherit; font-size:13px; background:#5cab5e; color:#000; border:0; padding:8px 14px; margin:8px 8px 0 0; cursor:pointer; }
+  button.alt { background:#6abfc6; }
+  .breit { overflow-x:auto; }
+  table { border-collapse:collapse; font-size:12.5px; margin:6px 0 4px; }
+  th,td { border:1px solid var(--dgrau); padding:4px 7px; text-align:left; white-space:nowrap; }
+  th { color:var(--gruen); background:#0b0b14; }
+  td.n { text-align:right; }
+  td.w1 { color:var(--gelb); } td.w2 { color:#e2a05a; } td.w3 { color:var(--rot); font-weight:bold; }
+  .gold { color:#f2c85c; } .silber { color:#c9d3dd; } .bronze { color:#c87a56; }
+  .hinweis { color:var(--dgrau); font-size:12px; }
+  .fehler { color:var(--rot); font-size:13px; }
+  .balken { display:inline-block; height:9px; background:var(--rot); vertical-align:middle; margin-right:6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Auswertung der Ergebnis-Codes</h1>
+  <p>Für Lehrkräfte. Sammelcodes einer Lerngruppe einfügen, einer je Zeile (z. B. <span style="color:var(--gelb)">FAB-K3-LENA-CC094C1G60R006N</span>). Text drumherum stört nicht, die Codes werden herausgesucht.</p>
+  <p class="hinweis">Gerechnet wird nur in diesem Browser, es wird nichts verschickt oder gespeichert. Vorname und Leistung sind personenbezogene Daten: Codes bitte nur auf schulischen Wegen einsammeln.</p>
+  <textarea id="ein" spellcheck="false" placeholder="Codes hier einfügen ..."></textarea>
+  <div><button id="los">Auswerten</button><button id="csv" class="alt">Als CSV speichern</button><a href="index.html" style="margin-left:10px;font-size:13px">zurück zur Startseite</a></div>
+  <div id="aus"></div>
+</main>
+<script>
+/* Dieselbe Kodierung wie im Spiel (40_engine.js, 45_erklaer.js). Prüfsumme hängt am Vornamen. */
+const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+function normName(name) {
+  return (name || '').toUpperCase().replace(/Ä/g, 'AE').replace(/Ö/g, 'OE').replace(/Ü/g, 'UE')
+    .replace(/ß/g, 'SS').replace(/[^A-Z0-9]/g, '').substr(0, 12);
+}
+function nameKey(name) { let h = 5381; const up = normName(name); for (let i = 0; i < up.length; i++) h = ((h * 33) ^ up.charCodeAt(i)) >>> 0; return h; }
+function codeSum(body, name) {
+  let sum = nameKey(name) % 8191;
+  for (let i = 0; i < body.length; i += 8) sum = (sum * 31 + parseInt(body.substr(i, 8).padEnd(8, '0'), 2)) % 8191;
+  return sum;
+}
+function bitsOf(code) {
+  const c = code.toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/O/g, '0').replace(/I/g, '1').replace(/L/g, '1').replace(/U/g, 'V');
+  let bits = '';
+  for (const ch of c) { const v = B32.indexOf(ch); if (v < 0) return null; bits += v.toString(2).padStart(5, '0'); }
+  return { c, bits };
+}
+function lies(code, name) {
+  const b = bitsOf(code);
+  if (!b) return { ok: false, err: 'ungültiges Zeichen' };
+  if (b.c.length === 12) {
+    const body = b.bits.substr(0, 47), sum = parseInt(b.bits.substr(47, 13), 2);
+    const take = (o, n) => parseInt(body.substr(o, n), 2);
+    return { ok: codeSum(body, name) === sum, ver: take(0, 3), kap: take(3, 5), pts: take(8, 10), right: take(18, 6),
+             wrong: take(24, 6), hints: take(30, 6), min: take(36, 9), status: take(45, 2) };
+  }
+  if (b.c.length === 16) {          // Erklärinsel: fünf Stationen (die Fassung mit 15 Zeichen wurde nie ausgegeben)
+    const body = b.bits.substr(0, 67), sum = parseInt(b.bits.substr(67, 13), 2);
+    let o = 0; const take = n => { const x = parseInt(body.substr(o, n), 2); o += n; return x; };
+    const r = { ok: codeSum(body, name) === sum, ver: take(3), kap: take(5), min: take(9), ses: take(4), status: take(2), gw: take(3), st: [] };
+    for (let i = 0; i < NST; i++) r.st.push({ done: take(1), m: take(1), mw: take(2), pw: take(2), h: take(2) });
+    r.done = r.st.filter(s => s.done).length; r.meister = r.st.filter(s => s.m).length;
+    r.medal = (r.done === NST && r.meister === NST) ? 3 : (r.done === NST ? 2 : (r.done >= 2 ? 1 : 0));
+    if (r.ver !== 3) r.ok = false;
+    return r;
+  }
+  return { ok: false, err: 'Code hat ' + b.c.length + ' Zeichen, erwartet 12 oder 16' };
+}
+
+const STATUS = ['Pause/abgebrochen', 'abgeschlossen', 'Teilsieg', 'am Tor gescheitert'];
+const MEDAL = ['-', 'Bronze', 'Silber', 'Gold'], MKL = ['', 'bronze', 'silber', 'gold'];
+const KAPITEL = { 1: 'Die Nacht vor der Klausur', 2: 'Lineara und Quadrata', 3: 'Die Grube von Tangentia', 4: 'Derivia', 5: 'Integralia' };
+const MAXP = { 1: 850, 2: 1000, 4: 995, 5: 870 };
+const ST3 = ['Stolleneingang: mittlere Änderungsrate', 'Bremsberg: Ableitung an einer Stelle', 'Füllort: Differentialquotient aufstellen und berechnen', 'Förderstrecke: Änderungsrate im Sachkontext', 'Markscheiderei: Ableitungsfunktion'];
+const NST = ST3.length;
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+let ZEILEN = [];
+
+function auswerten() {
+  const text = document.getElementById('ein').value.toUpperCase();
+  const re = /FAB-K(\d+)-([A-Z0-9]{2,12})-([A-Z0-9]{4}(?:-?[A-Z0-9]{4}){2,3})/g;
+  const gut = [], schlecht = []; let m; const gesehen = new Set();
+  while ((m = re.exec(text))) {
+    if (gesehen.has(m[0])) continue; gesehen.add(m[0]);
+    const r = lies(m[3], m[2]);
+    if (r.ok && r.kap === parseInt(m[1], 10)) gut.push(Object.assign({ name: m[2], roh: m[0] }, r));
+    else schlecht.push([m[0], r.err || (r.ok ? 'Kapitel im Code passt nicht zur Kennung' : 'Prüfsumme passt nicht zum Namen (vertippt oder Name geändert)')]);
+  }
+  ZEILEN = gut;
+  let h = '';
+  if (!gut.length && !schlecht.length) h += '<p class="fehler">Kein Sammelcode gefunden. Er beginnt mit FAB-K und enthält Kapitel, Vornamen und Code.</p>';
+  const kap = [...new Set(gut.map(g => g.kap))].sort();
+  for (const k of kap) {
+    const g = gut.filter(x => x.kap === k).sort((a, b) => a.name.localeCompare(b.name));
+    h += '<h2>Kapitel ' + k + (KAPITEL[k] ? ': ' + KAPITEL[k] : '') + ' &middot; ' + g.length + (g.length === 1 ? ' Code' : ' Codes') + '</h2>';
+    if (g[0].ver === 3) {
+      const w = v => '<td class="n w' + v + '">' + v + '</td>';
+      h += '<div class="breit"><table><tr><th rowspan="2">Name</th><th rowspan="2">Status</th><th rowspan="2">Stationen</th><th rowspan="2">Meister</th><th rowspan="2">Steigerbuch</th><th rowspan="2">Zeit</th><th rowspan="2">Sitzungen</th><th rowspan="2">Tor falsch</th>'
+        + ST3.map((s, i) => '<th colspan="4">' + (i + 1) + ' ' + esc(s.split(':')[0]) + '</th>').join('') + '</tr><tr>'
+        + ST3.map(() => '<th title="Station geschafft / Meisterprobe">✓/★</th><th title="Fehlgriffe im Minispiel">Spiel</th><th title="falsche Probefragen">Probe</th><th title="Tipps">Tipps</th>').join('') + '</tr>';
+      for (const r of g) h += '<tr><td>' + esc(r.name) + '</td><td>' + STATUS[r.status] + '</td><td class="n">' + r.done + '/' + NST + '</td><td class="n">' + r.meister + '/' + NST + '</td><td class="' + MKL[r.medal] + '">' + MEDAL[r.medal]
+        + '</td><td class="n">' + r.min + ' min</td><td class="n">' + r.ses + '</td>' + w(Math.min(3, r.gw))
+        + r.st.map(s => '<td>' + (s.done ? '✓' : '·') + (s.m ? '★' : '') + '</td>' + w(s.mw) + w(s.pw) + w(s.h)).join('') + '</tr>';
+      h += '</table></div><p class="hinweis">Spiel = Fehlgriffe im Minispiel, Probe = falsch beantwortete Probefragen, Tipps = geholte Tipps. 3 heißt „3 oder mehr“, Tor falsch 7 heißt „7 oder mehr“. Zeit ist aktive Spielzeit; Sitzungen zeigt, an wie vielen Anläufen gespielt wurde.</p>';
+      h += '<h2>Wo hakt es in der Gruppe?</h2><table><tr><th>Station</th><th>geschafft</th><th>Meisterprobe</th><th>Fehlgriffe im Spiel (Schnitt)</th><th>Probefrage falsch (Anteil)</th><th>Tipps (Schnitt)</th></tr>';
+      ST3.forEach((s, i) => {
+        const n = g.length, sum = f => g.reduce((a, r) => a + f(r.st[i]), 0);
+        const mw = sum(x => x.mw) / n, pw = sum(x => x.pw > 0 ? 1 : 0) / n, hh = sum(x => x.h) / n;
+        h += '<tr><td>' + (i + 1) + ' ' + esc(s) + '</td><td class="n">' + sum(x => x.done) + '/' + n + '</td><td class="n">' + sum(x => x.m) + '/' + n + '</td><td><span class="balken" style="width:' + Math.round(mw * 40) + 'px"></span>' + mw.toFixed(1).replace('.', ',')
+          + '</td><td><span class="balken" style="width:' + Math.round(pw * 120) + 'px"></span>' + Math.round(pw * 100) + ' %</td><td class="n">' + hh.toFixed(1).replace('.', ',') + '</td></tr>';
+      });
+      h += '</table>';
+    } else {
+      h += '<table><tr><th>Name</th><th>Status</th><th>Punkte</th><th>richtig</th><th>falsch</th><th>Tipps</th><th>Zeit</th></tr>';
+      for (const r of g) h += '<tr><td>' + esc(r.name) + '</td><td>' + STATUS[r.status] + '</td><td class="n">' + r.pts + (MAXP[k] ? ' / ' + MAXP[k] : '') + '</td><td class="n">' + r.right + '</td><td class="n">' + r.wrong + '</td><td class="n">' + r.hints + '</td><td class="n">' + r.min + ' min</td></tr>';
+      h += '</table><p class="hinweis">Kapitel 1 und 2 melden nur Summen. Zeit: bei Codes aus der Fassung vor dem 2026-11-14 ist das die Zeit seit dem ersten Start samt Pausen, höchstens 511 Minuten.</p>';
+    }
+  }
+  if (schlecht.length) h += '<h2>Nicht lesbar</h2>' + schlecht.map(s => '<p class="fehler">' + esc(s[0]) + ': ' + esc(s[1]) + '</p>').join('');
+  document.getElementById('aus').innerHTML = h;
+}
+function csv() {
+  if (!ZEILEN.length) auswerten();
+  const kopf = ['Kapitel', 'Name', 'Status', 'Zeit_min', 'Sitzungen', 'Punkte', 'richtig', 'falsch', 'Tipps', 'Stationen', 'Meisterproben', 'Steigerbuch', 'Tor_falsch'];
+  for (let i = 1; i <= NST; i++) kopf.push('S' + i + '_geschafft', 'S' + i + '_Meister', 'S' + i + '_Spiel_Fehlgriffe', 'S' + i + '_Probe_falsch', 'S' + i + '_Tipps');
+  kopf.push('Code');
+  const z = [kopf.join(';')];
+  for (const r of ZEILEN) {
+    const a = [r.kap, r.name, STATUS[r.status], r.min, r.ses === undefined ? '' : r.ses, r.pts === undefined ? '' : r.pts, r.right === undefined ? '' : r.right,
+               r.wrong === undefined ? '' : r.wrong, r.hints === undefined ? '' : r.hints, r.done === undefined ? '' : r.done, r.meister === undefined ? '' : r.meister,
+               r.medal === undefined ? '' : MEDAL[r.medal], r.gw === undefined ? '' : r.gw];
+    for (let i = 0; i < NST; i++) { const s = r.st && r.st[i]; a.push(s ? s.done : '', s ? s.m : '', s ? s.mw : '', s ? s.pw : '', s ? s.h : ''); }
+    a.push(r.roh);
+    z.push(a.join(';'));
+  }
+  const blob = new Blob(['﻿' + z.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const el = document.createElement('a');
+  el.href = URL.createObjectURL(blob); el.download = 'fabiturio_auswertung.csv';
+  document.body.appendChild(el); el.click(); el.remove();
+}
+document.getElementById('los').addEventListener('click', auswerten);
+document.getElementById('csv').addEventListener('click', csv);
+</script>
+</body>
+</html>
