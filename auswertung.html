@@ -31,7 +31,7 @@
 <body>
 <main>
   <h1>Auswertung der Ergebnis-Codes</h1>
-  <p>Für Lehrkräfte. Sammelcodes einer Lerngruppe einfügen, einer je Zeile (z. B. <span style="color:var(--gelb)">FAB-K3-LENA-CC094C1G60R006N</span>). Text drumherum stört nicht, die Codes werden herausgesucht.</p>
+  <p>Für Lehrkräfte. Sammelcodes einer Lerngruppe einfügen, einer je Zeile (z. B. <span style="color:var(--gelb)">FAB-K3-LENA-CC094C1G60R006N</span>; ab Kapitel 4 sind die Codes deutlich länger). Text drumherum stört nicht, die Codes werden herausgesucht.</p>
   <p class="hinweis">Gerechnet wird nur in diesem Browser, es wird nichts verschickt oder gespeichert. Vorname und Leistung sind personenbezogene Daten: Codes bitte nur auf schulischen Wegen einsammeln.</p>
   <textarea id="ein" spellcheck="false" placeholder="Codes hier einfügen ..."></textarea>
   <div><button id="los">Auswerten</button><button id="csv" class="alt">Als CSV speichern</button><a href="index.html" style="margin-left:10px;font-size:13px">zurück zur Startseite</a></div>
@@ -75,21 +75,52 @@ function lies(code, name) {
     if (r.ver !== 3) r.ok = false;
     return r;
   }
-  return { ok: false, err: 'Code hat ' + b.c.length + ' Zeichen, erwartet 12 oder 16' };
+  if (b.c.length > 24) return lies4(b.bits, name);
+  return { ok: false, err: 'Code hat ' + b.c.length + ' Zeichen, erwartet 12, 16 oder über 24' };
+}
+/* Fassung 4 (Stufe 2, ab Kapitel 4, 2026-11-17): Aufbau wie in 47_code4.js, Prüfsumme 16 Bit */
+function summe4(body, name) {
+  let s = nameKey(name) % 65521;
+  for (let i = 0; i < body.length; i += 8) s = (s * 31 + parseInt(body.substr(i, 8).padEnd(8, '0'), 2)) % 65521;
+  return s;
+}
+function lies4(bits, name) {
+  const body = bits.substr(0, bits.length - 16), sum = parseInt(bits.substr(bits.length - 16), 2);
+  let o = 0; const take = n => { const x = parseInt(body.substr(o, n) || '0', 2); o += n; return x; };
+  const r = { ver: take(3), kap: take(5), status: take(2), min: take(9), ses: take(4), pts: take(10), gw: take(3), ueb: take(4), orte: [], boss: [] };
+  const n = take(4);
+  for (let i = 0; i < n; i++) {
+    const ort = { nt: take(3), stand: take(2), ti: take(3), n: take(2), t: [] };
+    for (let k = 0; k < ort.nt; k++) ort.t.push({ f: take(2), h: take(2), a: take(2) });
+    r.orte.push(ort);
+  }
+  const nb = take(4);
+  for (let i = 0; i < nb; i++) r.boss.push(take(2));
+  r.ok = r.ver === 4 && o <= body.length && summe4(body, name) === sum;
+  if (!r.ok) r.err = r.ver !== 4 ? 'unbekannte Codefassung' : 'Prüfsumme passt nicht zum Namen (vertippt oder Name geändert)';
+  r.orte.forEach(ort => { ort.geloest = ort.stand === 2 ? ort.nt : Math.min(ort.nt, ort.ti); });
+  r.right = r.orte.reduce((a, x) => a + x.geloest, 0);
+  r.wrong = r.orte.reduce((a, x) => a + x.t.reduce((b, y) => b + y.f, 0), 0);
+  r.hints = r.orte.reduce((a, x) => a + x.t.reduce((b, y) => b + y.h, 0), 0);
+  return r;
 }
 
 const STATUS = ['Pause/abgebrochen', 'abgeschlossen', 'Teilsieg', 'am Tor gescheitert'];
 const MEDAL = ['-', 'Bronze', 'Silber', 'Gold'], MKL = ['', 'bronze', 'silber', 'gold'];
 const KAPITEL = { 1: 'Die Nacht vor der Klausur', 2: 'Lineara und Quadrata', 3: 'Die Grube von Tangentia', 4: 'Derivia', 5: 'Integralia' };
-const MAXP = { 1: 850, 2: 1000, 4: 995, 5: 870 };
+const MAXP = { 1: 850, 2: 1000, 4: 1015, 5: 870 };
 const ST3 = ['Stolleneingang: mittlere Änderungsrate', 'Bremsberg: Ableitung an einer Stelle', 'Füllort: Differentialquotient aufstellen und berechnen', 'Förderstrecke: Änderungsrate im Sachkontext', 'Markscheiderei: Ableitungsfunktion'];
 const NST = ST3.length;
+/* Namen der Orte je Kapitel (Reihenfolge wie in der Inhaltsdatei); fehlt ein Kapitel, heißt es „Ort 1" usw. */
+const ORTE = { 4: ['Regelstube', 'Wasserturm', 'Achterbahn', 'Prüfstube', 'Polklippe', 'Horizontsteg', 'Steigerbude (freiwillig)'] };
+const ortName = (k, i) => (ORTE[k] && ORTE[k][i]) || ('Ort ' + (i + 1));
+const BOSS4 = ['-', 'sofort', '2. Versuch', 'später'];
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 let ZEILEN = [];
 
 function auswerten() {
   const text = document.getElementById('ein').value.toUpperCase();
-  const re = /FAB-K(\d+)-([A-Z0-9]{2,12})-([A-Z0-9]{4}(?:-?[A-Z0-9]{4}){2,3})/g;
+  const re = /FAB-K(\d+)-([A-Z0-9]{2,12})-([A-Z0-9]+(?:-[A-Z0-9]+)*)/g;
   const gut = [], schlecht = []; let m; const gesehen = new Set();
   while ((m = re.exec(text))) {
     if (gesehen.has(m[0])) continue; gesehen.add(m[0]);
@@ -104,7 +135,8 @@ function auswerten() {
   for (const k of kap) {
     const g = gut.filter(x => x.kap === k).sort((a, b) => a.name.localeCompare(b.name));
     h += '<h2>Kapitel ' + k + (KAPITEL[k] ? ': ' + KAPITEL[k] : '') + ' &middot; ' + g.length + (g.length === 1 ? ' Code' : ' Codes') + '</h2>';
-    if (g[0].ver === 3) {
+    if (g[0].ver === 4) h += tabelle4(k, g);
+    else if (g[0].ver === 3) {
       const w = v => '<td class="n w' + v + '">' + v + '</td>';
       h += '<div class="breit"><table><tr><th rowspan="2">Name</th><th rowspan="2">Status</th><th rowspan="2">Stationen</th><th rowspan="2">Meister</th><th rowspan="2">Steigerbuch</th><th rowspan="2">Zeit</th><th rowspan="2">Sitzungen</th><th rowspan="2">Tor falsch</th>'
         + ST3.map((s, i) => '<th colspan="4">' + (i + 1) + ' ' + esc(s.split(':')[0]) + '</th>').join('') + '</tr><tr>'
@@ -130,10 +162,47 @@ function auswerten() {
   if (schlecht.length) h += '<h2>Nicht lesbar</h2>' + schlecht.map(s => '<p class="fehler">' + esc(s[0]) + ': ' + esc(s[1]) + '</p>').join('');
   document.getElementById('aus').innerHTML = h;
 }
+/* Fassung 4: Übersicht je Person, Teilaufgaben der Gruppe, Turmfragen, Einzelheiten je Person */
+function tabelle4(k, g) {
+  const w = v => '<td class="n w' + v + '">' + v + '</td>', no = g[0].orte.length, buchst = i => String.fromCharCode(97 + i);
+  let h = '<div class="breit"><table><tr><th>Name</th><th>Status</th><th>Punkte</th><th title="gelöste Teilaufgaben">gelöst</th><th title="Fehlversuche, je Teilaufgabe höchstens 3 gezählt">Fehlv.</th><th title="selbst geholte Tipps">Tipps</th><th title="Turmfragen im ersten Versuch">Turm sofort</th><th>Zeit</th><th>Sitzungen</th><th>Tor falsch</th><th title="Übungsdurchgänge an gelösten Orten">geübt</th>'
+    + g[0].orte.map((o, i) => '<th title="' + esc(ortName(k, i)) + '">' + esc(ortName(k, i).split(' ')[0]) + '</th>').join('') + '</tr>';
+  for (const r of g) {
+    h += '<tr><td>' + esc(r.name) + '</td><td>' + STATUS[r.status] + '</td><td class="n">' + r.pts + (MAXP[k] ? ' / ' + MAXP[k] : '') + '</td><td class="n">' + r.right + '</td><td class="n">' + r.wrong + '</td><td class="n">' + r.hints
+      + '</td><td class="n">' + r.boss.filter(x => x === 1).length + ' / ' + r.boss.length + '</td><td class="n">' + r.min + ' min</td><td class="n">' + r.ses + '</td>' + w(Math.min(3, r.gw)) + '<td class="n">' + r.ueb + '</td>'
+      + r.orte.map(o => '<td class="n' + (o.n ? ' w3' : '') + '" title="' + (o.n ? o.n + '× gesperrt' : '') + '">' + o.geloest + '/' + o.nt + (o.n ? ' ⊘' : '') + '</td>').join('') + '</tr>';
+  }
+  h += '</table></div><p class="hinweis">Je Ort: gelöste Teilaufgaben von allen, ⊘ = Ort war mindestens einmal gesperrt. Fehlversuche und Tipps werden je Teilaufgabe bis 3 gezählt („3 oder mehr“), Tor falsch 3 heißt „3 oder mehr“. Üben zählt nirgends mit.</p>';
+  h += '<h2>Wo hakt es in der Gruppe?</h2><div class="breit"><table><tr><th>Teilaufgabe</th><th>gelöst</th><th>mit Fehlversuch</th><th>Fehlv. (Schnitt)</th><th>Tipps (Schnitt)</th><th title="falsche Antworten in der Reihenfolge des Textbuchs">erste falsche Wahl A1 / A2 / A3</th></tr>';
+  for (let i = 0; i < no; i++) for (let j = 0; j < g[0].orte[i].nt; j++) {
+    const n = g.length, x = g.map(r => r.orte[i] && r.orte[i].t[j]).filter(Boolean), sum = f => x.reduce((a, y) => a + f(y), 0);
+    const gel = g.filter(r => r.orte[i] && r.orte[i].geloest > j).length, mitF = sum(y => y.f > 0 ? 1 : 0);
+    const a = [1, 2, 3].map(z => sum(y => y.a === z ? 1 : 0)), am = Math.max(...a);
+    h += '<tr><td>' + esc(ortName(k, i)) + ' ' + buchst(j) + ')</td><td class="n">' + gel + '/' + n + '</td><td><span class="balken" style="width:' + Math.round(mitF / n * 120) + 'px"></span>' + Math.round(mitF / n * 100) + ' %</td><td class="n">'
+      + (sum(y => y.f) / n).toFixed(1).replace('.', ',') + '</td><td class="n">' + (sum(y => y.h) / n).toFixed(1).replace('.', ',') + '</td><td>' + a.map(z => (z && z === am ? '<b style="color:var(--rot)">' + z + '</b>' : z)).join(' / ') + '</td></tr>';
+  }
+  h += '</table></div><p class="hinweis">A1 bis A3 sind die falschen Antworten einer Teilaufgabe in der Reihenfolge, in der sie im Textbuch stehen (✗-Zeilen); gezählt wird nur die erste falsche Wahl je Person.</p>';
+  const nb = Math.max(...g.map(r => r.boss.length));
+  if (nb) {
+    h += '<h2>Der Turm</h2><table><tr><th>Frage</th><th>sofort</th><th>2. Versuch</th><th>später / gerettet</th><th>nicht erreicht</th></tr>';
+    for (let q = 0; q < nb; q++) { const c = z => g.filter(r => (r.boss[q] || 0) === z).length; h += '<tr><td>' + (q + 1) + '</td><td class="n">' + c(1) + '</td><td class="n">' + c(2) + '</td><td class="n">' + c(3) + '</td><td class="n">' + c(0) + '</td></tr>'; }
+    h += '</table><p class="hinweis">Die achte Frage (Asymptoten) kommt nur für alle, die auf Asymptotia waren.</p>';
+  }
+  h += '<h2>Einzelheiten je Person</h2><div class="breit"><table><tr><th>Name</th>' + g[0].orte.map((o, i) => '<th colspan="' + o.nt + '">' + esc(ortName(k, i).split(' ')[0]) + '</th>').join('') + '</tr><tr><th></th>' + g[0].orte.map(o => o.t.map((_, j) => '<th>' + buchst(j) + '</th>').join('')).join('') + '</tr>';
+  for (const r of g) h += '<tr><td>' + esc(r.name) + '</td>' + r.orte.map(o => o.t.map((y, j) => '<td class="n w' + y.f + '" title="Fehlversuche ' + y.f + ', Tipps ' + y.h + (y.a ? ', zuerst A' + y.a : '') + '">' + (o.geloest > j ? '✓' : '·') + (y.f ? y.f : '') + (y.h ? '+' + y.h : '') + '</td>').join('')).join('') + '</tr>';
+  h += '</table></div><p class="hinweis">✓ gelöst, · nicht gelöst; Zahl = Fehlversuche, +Zahl = selbst geholte Tipps. Mit der Maus über einer Zelle steht der erste Ablenker.</p>';
+  return h;
+}
 function csv() {
   if (!ZEILEN.length) auswerten();
   const kopf = ['Kapitel', 'Name', 'Status', 'Zeit_min', 'Sitzungen', 'Punkte', 'richtig', 'falsch', 'Tipps', 'Stationen', 'Meisterproben', 'Steigerbuch', 'Tor_falsch'];
   for (let i = 1; i <= NST; i++) kopf.push('S' + i + '_geschafft', 'S' + i + '_Meister', 'S' + i + '_Spiel_Fehlgriffe', 'S' + i + '_Probe_falsch', 'S' + i + '_Tipps');
+  const v4 = ZEILEN.filter(r => r.ver === 4), struk = v4.length ? v4[0] : null;
+  if (struk) {
+    struk.orte.forEach((o, i) => o.t.forEach((_, j) => { const p = 'O' + (i + 1) + String.fromCharCode(97 + j); kopf.push(p + '_geloest', p + '_Fehlv', p + '_Tipps', p + '_erster_Ablenker'); }));
+    struk.boss.forEach((_, q) => kopf.push('Turm' + (q + 1)));
+    kopf.push('geuebt');
+  }
   kopf.push('Code');
   const z = [kopf.join(';')];
   for (const r of ZEILEN) {
@@ -141,6 +210,11 @@ function csv() {
                r.wrong === undefined ? '' : r.wrong, r.hints === undefined ? '' : r.hints, r.done === undefined ? '' : r.done, r.meister === undefined ? '' : r.meister,
                r.medal === undefined ? '' : MEDAL[r.medal], r.gw === undefined ? '' : r.gw];
     for (let i = 0; i < NST; i++) { const s = r.st && r.st[i]; a.push(s ? s.done : '', s ? s.m : '', s ? s.mw : '', s ? s.pw : '', s ? s.h : ''); }
+    if (struk) {
+      struk.orte.forEach((o, i) => o.t.forEach((_, j) => { const x = r.ver === 4 && r.orte[i] && r.orte[i].t[j]; a.push(x ? (r.orte[i].geloest > j ? 1 : 0) : '', x ? x.f : '', x ? x.h : '', x ? (x.a ? 'A' + x.a : '') : ''); }));
+      struk.boss.forEach((_, q) => a.push(r.ver === 4 ? BOSS4[r.boss[q] || 0] : ''));
+      a.push(r.ver === 4 ? r.ueb : '');
+    }
     a.push(r.roh);
     z.push(a.join(';'));
   }
