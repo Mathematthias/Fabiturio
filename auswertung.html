@@ -108,11 +108,11 @@ function lies4(bits, name) {
 const STATUS = ['Pause/abgebrochen', 'abgeschlossen', 'Teilsieg', 'am Tor gescheitert'];
 const MEDAL = ['-', 'Bronze', 'Silber', 'Gold'], MKL = ['', 'bronze', 'silber', 'gold'];
 const KAPITEL = { 1: 'Die Nacht vor der Klausur', 2: 'Lineara und Quadrata', 3: 'Die Grube von Tangentia', 4: 'Derivia', 5: 'Integralia' };
-const MAXP = { 1: 850, 2: 1000, 4: 1015, 5: 870 };
+const MAXP = { 1: 850, 2: 1000, 4: 990, 5: 870 };
 const ST3 = ['Stolleneingang: mittlere Änderungsrate', 'Bremsberg: Ableitung an einer Stelle', 'Füllort: Differentialquotient aufstellen und berechnen', 'Förderstrecke: Änderungsrate im Sachkontext', 'Markscheiderei: Ableitungsfunktion'];
 const NST = ST3.length;
 /* Namen der Orte je Kapitel (Reihenfolge wie in der Inhaltsdatei); fehlt ein Kapitel, heißt es „Ort 1" usw. */
-const ORTE = { 4: ['Regelstube', 'Wasserturm', 'Achterbahn', 'Prüfstube', 'Polklippe', 'Horizontsteg', 'Steigerbude (freiwillig)'],
+const ORTE = { 4: ['Regelstube', 'Wasserturm', 'Achterbahn', 'Prüfstube', 'Polklippe', 'Horizontsteg', 'Steigerbude (freiwillig)', 'Landeplatz'],
                5: ['Baumschule', 'Leuchtturm', 'Solarfeld', 'Schleuse', 'Gutachterstube'] };
 const ortName = (k, i) => (ORTE[k] && ORTE[k][i]) || ('Ort ' + (i + 1));
 const BOSS4 = ['-', 'sofort', '2. Versuch', 'später'];

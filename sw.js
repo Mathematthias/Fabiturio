@@ -7,7 +7,7 @@
    kommt sie aus dem Speicher. Vorher kam alles zuerst aus dem Speicher: Nach einem
    Upload spielte man beim ersten Aufruf noch die alte Fassung.
    Neue Fassung = neue VERSION, dann raeumt der Worker den alten Speicher weg. */
-const VERSION = 'fab-2026-11-18-1171ef5a';
+const VERSION = 'fab-2026-11-18-e3ca8566';
 const DATEIEN = [
   './', './index.html', './kapitel1.html', './kapitel2.html', './kapitel3.html', './kapitel4.html', './kapitel5.html',
   './steigerbuch_k3.pdf', './auswertung.html',
