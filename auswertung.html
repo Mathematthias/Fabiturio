@@ -112,7 +112,8 @@ const MAXP = { 1: 850, 2: 1000, 4: 1015, 5: 870 };
 const ST3 = ['Stolleneingang: mittlere Änderungsrate', 'Bremsberg: Ableitung an einer Stelle', 'Füllort: Differentialquotient aufstellen und berechnen', 'Förderstrecke: Änderungsrate im Sachkontext', 'Markscheiderei: Ableitungsfunktion'];
 const NST = ST3.length;
 /* Namen der Orte je Kapitel (Reihenfolge wie in der Inhaltsdatei); fehlt ein Kapitel, heißt es „Ort 1" usw. */
-const ORTE = { 4: ['Regelstube', 'Wasserturm', 'Achterbahn', 'Prüfstube', 'Polklippe', 'Horizontsteg', 'Steigerbude (freiwillig)'] };
+const ORTE = { 4: ['Regelstube', 'Wasserturm', 'Achterbahn', 'Prüfstube', 'Polklippe', 'Horizontsteg', 'Steigerbude (freiwillig)'],
+               5: ['Baumschule', 'Leuchtturm', 'Solarfeld', 'Schleuse', 'Gutachterstube'] };
 const ortName = (k, i) => (ORTE[k] && ORTE[k][i]) || ('Ort ' + (i + 1));
 const BOSS4 = ['-', 'sofort', '2. Versuch', 'später'];
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -186,7 +187,7 @@ function tabelle4(k, g) {
   if (nb) {
     h += '<h2>Der Turm</h2><table><tr><th>Frage</th><th>sofort</th><th>2. Versuch</th><th>später / gerettet</th><th>nicht erreicht</th></tr>';
     for (let q = 0; q < nb; q++) { const c = z => g.filter(r => (r.boss[q] || 0) === z).length; h += '<tr><td>' + (q + 1) + '</td><td class="n">' + c(1) + '</td><td class="n">' + c(2) + '</td><td class="n">' + c(3) + '</td><td class="n">' + c(0) + '</td></tr>'; }
-    h += '</table><p class="hinweis">Die achte Frage (Asymptoten) kommt nur für alle, die auf Asymptotia waren.</p>';
+    h += '</table>' + (k === 4 ? '<p class="hinweis">Die achte Frage (Asymptoten) kommt nur für alle, die auf Asymptotia waren.</p>' : '') + '';
   }
   h += '<h2>Einzelheiten je Person</h2><div class="breit"><table><tr><th>Name</th>' + g[0].orte.map((o, i) => '<th colspan="' + o.nt + '">' + esc(ortName(k, i).split(' ')[0]) + '</th>').join('') + '</tr><tr><th></th>' + g[0].orte.map(o => o.t.map((_, j) => '<th>' + buchst(j) + '</th>').join('')).join('') + '</tr>';
   for (const r of g) h += '<tr><td>' + esc(r.name) + '</td>' + r.orte.map(o => o.t.map((y, j) => '<td class="n w' + y.f + '" title="Fehlversuche ' + y.f + ', Tipps ' + y.h + (y.a ? ', zuerst A' + y.a : '') + '">' + (o.geloest > j ? '✓' : '·') + (y.f ? y.f : '') + (y.h ? '+' + y.h : '') + '</td>').join('')).join('') + '</tr>';
