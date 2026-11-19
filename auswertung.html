@@ -71,7 +71,7 @@ function lies(code, name) {
     const r = { ok: codeSum(body, name) === sum, ver: take(3), kap: take(5), min: take(9), ses: take(4), status: take(2), gw: take(3), st: [] };
     for (let i = 0; i < NST; i++) r.st.push({ done: take(1), m: take(1), mw: take(2), pw: take(2), h: take(2) });
     r.done = r.st.filter(s => s.done).length; r.meister = r.st.filter(s => s.m).length;
-    r.medal = (r.done === NST && r.meister === NST) ? 3 : (r.done === NST ? 2 : (r.done >= 2 ? 1 : 0));
+    r.medal = (r.done === NST && r.meister === NST) ? 3 : (r.done === NST ? 2 : 0);   // ohne Bronze seit 2026-11-19
     if (r.ver !== 3) r.ok = false;
     return r;
   }

@@ -2521,6 +2521,14 @@ const Game = {
 
   talkAdvance(gewaehlt) {
     const T = this.talk;
+    // Szene mit gabe (seit 2026-11-19): erst der Übergabe-Bildschirm, dann geht das Gespräch weiter
+    const jetzt = T.list[T.i];
+    if (!gewaehlt && jetzt && jetzt.gabe && !T.gabeZu) {
+      T.gabeZu = true;
+      this.gabe = { t0: this.t, st: -1, rw: jetzt.gabe, bg: jetzt.gabe.bg || jetzt.bg, sp: jetzt.gabe.speaker || jetzt.speaker, weiterTalk: true };
+      this.view = 'gabe'; Sound.sfx('gabeFlug'); this.gabeKlang(jetzt.gabe); return;
+    }
+    T.gabeZu = false;
     // Szene mit sprung: n - danach n Szenen auslassen (Ende eines Zweigs nach einer Auswahl)
     const alt = !gewaehlt && T.list[T.i];
     if (alt && alt.sprungZu) this.talkZu(alt.sprungZu);
@@ -2544,7 +2552,7 @@ const Game = {
       case 'gatePass':  { const g = this.curGate();      // Tor mit gabe (Kapitel 3, seit 2026-11-18): erst die Übergabe des Helms, dann weiter
                           if (g.gabe && this.gateGabe !== this.gateIx) { this.gateGabe = this.gateIx;
                             this.gabe = { t0: this.t, st: -1, rw: g.gabe, bg: g.bg, sp: g.gabe.speaker, danach: g.gabe.danach || [], then: 'gatePass' };
-                            this.view = 'gabe'; Sound.sfx('gabeFlug'); if (g.gabe.music) Sound.play(g.gabe.music); break; } }
+                            this.view = 'gabe'; Sound.sfx('gabeFlug'); this.gabeKlang(g.gabe); break; } }
                         this.gatePassed = true; this.gatesPassed = this.gateIx + 1;
                         this.island = this.gateIx; this.gotoMap(true); break;
       case 'none':      break;
@@ -2615,7 +2623,7 @@ const Game = {
     const g = this.curGate();
     const R = RNG(this.nextSeed());
     const qs = R.some(g.questions, Math.min(g.ask || 5, g.questions.length))
-                .map(q => { const o = Object.assign({}, q); o.options = R.shuffle(q.options); return aufTaste(o, this.ziehTaste()); });
+                .map(q => { const o = Object.assign({}, q, q.gen ? q.gen(R) : {}); o.options = R.shuffle(o.options); return aufTaste(o, this.ziehTaste()); });   // gen(R): Torfrage mit neuen Zahlen (seit 2026-11-19)
     this.gate = { i: 0, right: 0, phase: 'ask', pick: -1, qs };
     this.view = 'gate';
     this.sel = 0;
@@ -2811,9 +2819,13 @@ const Game = {
     this.save();
   },
 
+  /* Musik zur Übergabe: eigene (rw.music) oder die des Kapitels (gabeMusik, in K3 die Glück-auf-Fanfare) */
+  gabeKlang(rw) { const m = (rw && rw.music) || this.chapter.gabeMusik; if (m) Sound.play(m); },
+
   gabeDone() {
-    if (!this.gabe || this.t - this.gabe.t0 < (this.gabe.then ? 3.2 : 1.6)) return;      // erst ansehen, dann weiter; der Helm wartet, bis „Glück auf, Glück auf" gerufen ist
+    if (!this.gabe || this.t - this.gabe.t0 < (this.gabe.then || this.gabe.weiterTalk || this.chapter.gabeMusik ? 3.2 : 1.6)) return;      // erst ansehen, dann weiter; mit Fanfare wartet es, bis „Glück auf, Glück auf" gerufen ist
     const G = this.gabe;
+    if (G.weiterTalk) { this.gabe = null; Sound.sfx('move'); this.view = 'talk'; this.talkAdvance(); return; }
     if (G.then) { this.gabe = null; Sound.sfx('move'); if (G.danach.length) this.playTalk(G.danach, G.then); else this.afterTalk(G.then); return; }
     const seite = this.gabe.seite; this.gabe = null; Sound.sfx('move');
     if (seite) { this.ekOpenBook(this.cur, true); return; }   // Kapitel 3: nach der Seite geht das Steigerbuch auf
@@ -3317,10 +3329,10 @@ Object.assign(Game, {
   ekN() { return this.chapter.stations.length; },
   ekDone() { return this.stations.filter(s => s.state === ST_DONE).length; },
   ekMeister() { return this.stations.filter(s => s.ek && s.ek.m).length; },
-  /* 0 keine, 1 Bronze, 2 Silber, 3 Gold */
+  /* 0 keine, 2 Silber, 3 Gold (Bronze gibt es seit 2026-11-19 nicht mehr, Matthias: nur Silber für alle Stationen, Gold für alle Meisterproben) */
   ekMedal() {
     const d = this.ekDone(), n = this.ekN();
-    return (d === n && this.ekMeister() === n) ? 3 : (d === n ? 2 : (d >= 2 ? 1 : 0));
+    return (d === n && this.ekMeister() === n) ? 3 : (d === n ? 2 : 0);
   },
   ekHasPage(i) { const s = this.stations[i]; return !!s && (s.state === ST_DONE || (s.ek && s.ek.step >= 2)); },
   ekAllPages() { return this.stations.every((_, i) => this.ekHasPage(i)); },
@@ -3385,8 +3397,8 @@ Object.assign(Game, {
       case 'ekMeisterDoneF': st.ek.m = true; Sound.sfx('save'); this.save(); this.ekFrageStart(); return true;
       case 'ekSeite': {                     // seit 2026-11-18 wie in Kapitel 4: Die Stationsleitung reicht die Seite herüber, dann geht das Buch auf
         st.ek.step = 2; const S = this.chapter.stations[this.cur].erklaer.seite;
-        this.gabe = { t0: this.t, st: this.cur, seite: true, rw: { name: Screen.fein ? 'eine Seite fürs Steigerbuch' : 'eine Seite fürs Buch', bild: 'seite', icon: '⚒', titel: S && S.titel } };
-        this.view = 'gabe'; Sound.sfx('gabeFlug'); return true; }
+        this.gabe = { t0: this.t, st: this.cur, seite: true, rw: { name: Screen.fein ? 'eine Seite fürs Steigerbuch' : 'eine Seite fürs Buch', verb: 'Du erhältst', bild: 'seite', icon: '⚒', titel: S && S.titel } };
+        this.view = 'gabe'; Sound.sfx('gabeFlug'); this.gabeKlang(); return true; }
       case 'ekOut':   this.ekAfterStation(); return true;
       case 'ekMeisterDone': this.ekAfterMeister(); return true;
       case 'ekFinale': this.playTalk(this.chapter.outro, 'outro'); return true;
@@ -3577,7 +3589,7 @@ Object.assign(Game, {
     if (em.phase !== 'aus' || em.ausT < 0.7) return;
     if (em.ok) { this.right++; this.ekMiniDone(); return; }
     const st = this.stations[this.cur];
-    st.ek.mw = Math.min(3, st.ek.mw + 1); this.wrong++;
+    st.ek.mw = Math.min(3, st.ek.mw + 1); this.wrong++; em.fehl = (em.fehl || 0) + 1;   // em.fehl: Fehlversuche in diesem Spiel (Dreieck ab 1, Warnung ab 3)
     if (st.ek.mw >= 2 && em.hintN === 0) em.hintN = 1;
     this.ekFahrtReset(em);
   },
@@ -3859,7 +3871,7 @@ function readCode3(c, name) {
   const res = { ok: codeSum(body, name) === sum, ver: take(3), kap: take(5), min: take(9), ses: take(4), status: take(2), gw: take(3), st: [] };
   for (let i = 0; i < CODE3_STATIONS; i++) res.st.push({ done: take(1), m: take(1), mw: take(2), pw: take(2), h: take(2) });
   res.done = res.st.filter(s => s.done).length; res.meister = res.st.filter(s => s.m).length;
-  res.medal = (res.done === CODE3_STATIONS && res.meister === CODE3_STATIONS) ? 3 : (res.done === CODE3_STATIONS ? 2 : (res.done >= 2 ? 1 : 0));
+  res.medal = (res.done === CODE3_STATIONS && res.meister === CODE3_STATIONS) ? 3 : (res.done === CODE3_STATIONS ? 2 : 0);
   if (res.ver !== 3) res.ok = false;
   if (!res.ok) res.err = 'Code passt nicht zu diesem Namen.';
   return res;
@@ -5519,14 +5531,11 @@ function bgBremsberg(t) {
     messhuntBild(bx + 14, bremsBahn(bx + 14), bx + 38, bremsBahn(bx + 38), 0, 0, 'kasten');
     vordergrund(x => x < 70 ? 10 - x / 8 + 2 * Math.sin(x / 4) : 0);
   });
-  // Haspel: das Rad dreht sich, das Seil hält einen Hunt
+  // Haspel, steht still (seit 2026-11-19 ohne fahrenden Hunt: Matthias, er fuhr immer waagerecht und das Seil lief unter der Schiene)
   const hx = 26, hy = Y + 18;
   scheibe(hx, hy, 9, HOLZ[1]); scheibe(hx, hy, 7, HOLZ[3]); scheibe(hx, hy, 5, HOLZ[2]);
-  for (let k = 0; k < 4; k++) { const a = t * 0.6 + k * Math.PI / 2; linie(hx, hy, hx + Math.cos(a) * 7, hy + Math.sin(a) * 7, HOLZ[5]); }
+  for (let k = 0; k < 4; k++) { const a = 0.4 + k * Math.PI / 2; linie(hx, hy, hx + Math.cos(a) * 7, hy + Math.sin(a) * 7, HOLZ[5]); }
   scheibe(hx, hy, 1, STEIN[4]);
-  const wx = 220 + Math.round(Math.sin(t * 0.6) * 16), wy = bremsBahn(wx);
-  linie(hx + 7, hy + 5, wx - 9, wy - 8, DUNST[1]);
-  hunt(wx, wy + 1, true);
   haengelampe(98, Math.round(bremsBahn(98)) - 20, t, 32);
   haengelampe(262, Math.round(bremsBahn(262)) - 20, t + 1, 28);
   // das Pendel im Messhunt: verflucht schlägt es wild, gelöst hängt es still und senkrecht
@@ -5679,8 +5688,10 @@ function bgBruecke(t) {
     wolken(Y + 4, Y + 46, 0.58, 40);
     sonneB(236, HOR - 9, 11, HOR);
     // Derivia im Dunst: Hügel, ein Turm, noch unerreichbar
-    for (let x = 196; x < SW; x++) { const h = 9 + 8 * Math.sin((x - 196) / 30) + 3 * Math.sin(x / 7); Screen.rect(x, HOR - Math.round(h), 1, Math.round(h), x % 2 || h < 9 ? 19 : 20); }
-    Screen.rect(288, HOR - 28, 6, 16, 19); Screen.rect(286, HOR - 30, 10, 3, 19); Screen.rect(290, HOR - 34, 2, 4, 19);
+    // seit 2026-11-19 (Matthias: Achterbahn in der Luft, zu viele Häuser): ein ruhiger Hügel, ein Turm, der auf dem Hügel steht
+    const dh = x => Math.round(8 + 7 * Math.sin((x - 196) / 34) + 1.5 * Math.sin(x / 9));
+    for (let x = 196; x < SW; x++) { const h = dh(x); Screen.rect(x, HOR - h, 1, h, 19); Screen.px(x, HOR - h, 20); }
+    Screen.rect(288, HOR - dh(290) - 16, 6, 16 + 2, 19); Screen.rect(286, HOR - dh(290) - 18, 10, 3, 19); Screen.rect(290, HOR - dh(290) - 22, 2, 4, 19);
     inselkette(HOR, 6, 33, DUNST[0], 80, 100, 196);
     meerGrund(HOR, Y + BGH);
     // Klippe links: Fels, oben Gras
@@ -5704,6 +5715,8 @@ function bgBruecke(t) {
     // Bohlenstapel und Schild
     for (let k = 0; k < 4; k++) balken(106 + (k % 2) * 2, Y + 50 - k * 2, 24, 2, 0.45 + k * 0.08);
     Screen.rect(171, Y + 36, 2, 20, HOLZ[2]); balken(132, Y + 14, 80, 23, 0.3); Screen.frame(132, Y + 14, 80, 23, HOLZ[4]);
+    // Laternenpfahl auf der Klippe (Matthias: die Laterne hing in der Luft)
+    balken(20, Y + 30, 3, klippe(21) - Y - 29, 0.35); Screen.rect(20, Y + 30, 12, 2, HOLZ[1]); Screen.rect(30, Y + 32, 1, 2, STEIN[4]);
     vordergrund(x => x < 46 ? 5 + 2 * Math.sin(x / 5) : (x > 262 ? (x - 262) / 6 + 3 * Math.sin(x / 5) : 0));
   });
   Screen.textPx('Im Bau', 148, Y + 17, LICHT[1]); Screen.textPx('seit 1987', 136, Y + 27, LICHT[1]);   // Schilder in Normalschrift, Hauptwörter groß
@@ -6029,14 +6042,11 @@ k3Fein('bremsberg', function (t) {
     H2.R(bx, by - 36, 2, 36, WHITE); for (let k = 0; k < 14; k++) H2.R(bx + 2 + k, by - 36 + Math.round(k * 0.15), 1, 10 - Math.round(k * 0.2), k % 5 < 3 ? LTRED : 2);
     H2.vordergrund(x => x < 140 ? 20 - x / 8 + 4 * Math.sin(x / 8) : 0);
   });
-  // Haspel: das Rad dreht sich, das Seil hält einen Hunt
+  // Haspel, steht still (seit 2026-11-19 ohne fahrenden Hunt: Matthias, er fuhr immer waagerecht und das Seil lief unter der Schiene)
   const hx = 52, hy = Y + 36;
   H2.disc(hx, hy, 18, HOLZ[1]); H2.disc(hx, hy, 15, HOLZ[3]); H2.disc(hx, hy, 11, HOLZ[2]);
-  for (let k = 0; k < 4; k++) { const a = t * 0.6 + k * Math.PI / 2; H2.line(hx, hy, hx + Math.cos(a) * 15, hy + Math.sin(a) * 15, HOLZ[5], true); }
+  for (let k = 0; k < 4; k++) { const a = 0.4 + k * Math.PI / 2; H2.line(hx, hy, hx + Math.cos(a) * 15, hy + Math.sin(a) * 15, HOLZ[5], true); }
   H2.disc(hx, hy, 3, STEIN[4]);
-  const wx = 220 + Math.sin(t * 0.6) * 16, wy = B(wx);
-  H2.line(hx + 14, hy + 10, wx * 2 - 18, wy * 2 - 18, DUNST[1]);
-  hiHunt(Math.round(wx * 2), Math.round(wy * 2) - 3, true);
   hiHaengelampe(196, Math.round(B(98) * 2) - 40, t, 64);
   hiHaengelampe(524, Math.round(B(262) * 2) - 40, t + 1, 56);
   k3FeinTeil(() => { messhuntBild(164, B(164), 188, B(188), 0, 0, 'kasten'); messhuntBild(164, B(164), 188, B(188), ekGeloest('bremsberg') ? 0 : 0.9, t, 'lot'); });
@@ -6176,8 +6186,10 @@ k3Fein('bruecke', function (t) {
   const klippe = x => Y + 116 + Math.round(Math.sin(x * 0.1) * 3 + glatt(x / 2, 4, 5) * 4) + (x > 168 ? (x - 168) * 3.4 : 0);
   hiSzene('k3bruecke', () => {
     H2.himmel(HOR, SX, HOR - 16); H2.wolken(Y + 8, Y + 92, 0.58, 40, SX); H2.sonne(SX, HOR - 18, 22, HOR);
-    hiDerivia(HOR, 392, HW);                                                                           // Derivia im Dunst
-    H2.R(576, HOR - 56, 12, 32, 19); H2.R(572, HOR - 60, 20, 6, 19); H2.R(580, HOR - 68, 4, 8, 19);
+    // Derivia im Dunst; seit 2026-11-19 (Matthias: Achterbahn in der Luft, zu viele Häuser) ein ruhiger Hügel und ein Turm, der auf ihm steht
+    const dh = x => Math.round(18 + 10 * Math.sin((x - 392) / 70) + 3 * Math.sin(x / 18));
+    for (let x = 392; x < HW; x++) { const h = dh(x); for (let y = HOR - h; y < HOR; y++) H2.P(x, y, y === HOR - h ? 20 : 19); }
+    { const tb = HOR - dh(582) + 2; H2.R(576, tb - 34, 12, 34, 19); H2.R(572, tb - 38, 20, 6, 19); H2.R(580, tb - 46, 4, 8, 19); }
     H2.kette(HOR, 12, 66, DUNST[0], 160, 200, 392);
     H2.meer(HOR, Y + HBH, SX);
     H2.fels(0, Y + 100, 208, 124, 0.34, (x, y) => y >= klippe(x));
@@ -6195,6 +6207,9 @@ k3Fein('bruecke', function (t) {
     H2.holz(300, Y + 90, 4, 22, 0.4); H2.R(288, Y + 90, 28, 4, 59);                                     // Prellbock
     for (let k = 0; k < 4; k++) H2.holz(212 + (k % 2) * 4, Y + 100 - k * 4, 48, 4, 0.45 + k * 0.08);   // Bohlenstapel
     H2.holz(342, Y + 72, 4, 40, 0.4); H2.holz(264, Y + 28, 160, 46, 0.3); H2.F(264, Y + 28, 160, 46, HOLZ[4]);   // Schild
+    // Laternenpfahl auf der Klippe mit Ausleger (Matthias: die Laterne hing in der Luft)
+    H2.holz(36, Y + 60, 6, klippe(39) - Y - 56, 0.4); H2.holz(36, Y + 60, 30, 4, 0.5); H2.R(59, Y + 64, 2, 4, STEIN[4]);
+    H2.line(42, Y + 74, 52, Y + 64, HOLZ[1], true);
     H2.vordergrund(x => x < 92 ? 10 + 4 * Math.sin(x / 10) : (x > 524 ? (x - 524) / 6 + 6 * Math.sin(x / 10) : 0));
   });
   hiSchild(170, (Y + 34) / 2, 'Im Bau', LICHT[1]); hiSchild(170, (Y + 52) / 2, 'seit 1987', LICHT[1]);
@@ -9478,6 +9493,7 @@ function statusBar() {
 }
 
 function footer(txt, col) {
+  if (Game.chapter && Game.chapter.fussZeile && Game.mode === 'play') { fussNeu(txt, col); return; }   // K3: feste Tasten und wechselnder Tipp (69_zurueck.js)
   Screen.rect(0, SH - 8, SW, 8, DGREY);
   Screen.text(txt, 0, 24, col === undefined ? LTGREY : col);
 }
@@ -9663,14 +9679,14 @@ function renderGabe(t) {
   const u = Math.max(0, Math.min(1, (Game.t - G.t0) / 1.5)), e = u * u * (3 - 2 * u), da = u >= 1;
   if (da && !G.klang) { G.klang = true; Sound.sfx('gabe'); }       // Ankunftsklang (seit 2026-11-18)
   if (da && G.seite) {
-    Screen.textPx('Du bekommst: ' + rw.name, 12, 134, WHITE);
+    Screen.textPx((rw.verb || 'Du bekommst') + ': ' + rw.name, 12, 134, WHITE);
     const n = Game.chapter.stations.filter((_, i) => Game.ekHasPage(i)).length, z = 'Im Steigerbuch: ' + n + ' von ' + Game.ekN() + ' Seiten';
     Screen.textPx(z, 12, 160, LTGREY);
   } else if (da && !sd) {                                      // Übergabe am Tor: eine Zeile dazu statt der Sammlung
-    Screen.textPx('Du bekommst: ' + rw.name, 12, 134, WHITE);
+    Screen.textPx((rw.verb || 'Du bekommst') + ': ' + rw.name, 12, 134, WHITE);
     if (rw.zeile) Screen.textPx(rw.zeile, 12, 160, LTGREY);
   } else if (da) {
-    Screen.textPx('Du bekommst: ' + rw.name, 12, 134, WHITE);
+    Screen.textPx((rw.verb || 'Du bekommst') + ': ' + rw.name, 12, 134, WHITE);
     Screen.textPx('Gesammelt:', 12, 160, LTGREY);
     let gx = 12 + tw('Gesammelt:') + 8;
     Game.chapter.stations.forEach((s2, i) => {
@@ -9816,6 +9832,43 @@ const WALKER = [
   ['...888...', '..87778..', '..77777..', '..7.7.7..', '...777...', '..3.3.3..', '.3333333.',
    '.3.333.3.', '.3.333.3.', '...333...', '...3.3...', '...3.3...', '...3.3...', '...1.1...']
 ];
+/* Die Spielfigur auf dem Weg in feinen Punkten (640x400): X Mitte, Y Fußlinie, p Schrittphase.
+   Kopf mit Augen auf halber Höhe, abfallende Schultern, Arme und Beine pendeln gegengleich, Knie beugen sich. */
+function wandererFein(X, Y, p, laeuft) {
+  const dick = (x1, y1, x2, y2, d, c) => { const n = Math.ceil(Math.hypot(x2 - x1, y2 - y1)) + 1;
+    for (let i = 0; i <= n; i++) F2.rect(Math.round(x1 + (x2 - x1) * i / n - d / 2), Math.round(y1 + (y2 - y1) * i / n - d / 2), d, d, c); };
+  const HA = [HOLZ[0], HOLZ[1], HOLZ[2]], SK = [HAUT[0], HAUT[1], HAUT[2]], HE = [79, 80], HO = [76, 77], SCH = [STEIN[0], STEIN[1]];
+  const s = laeuft ? Math.sin(p) : 0, hub = laeuft ? Math.round(Math.abs(Math.cos(p)) * 1.5) : 0, y0 = Y - hub;
+  const bein = (ph, c, cs) => {                                      // Hüfte -> Knie -> Knöchel
+    const a = laeuft ? Math.sin(ph) * 0.45 : 0, beug = laeuft ? Math.max(0, -Math.cos(ph)) * 0.6 : 0;
+    const hx = X, hy = y0 - 26, kx = hx + Math.sin(a) * 13, ky = hy + Math.cos(a) * 13;
+    const fx = kx + Math.sin(a - beug) * 12, fy = Math.min(Y - 2, ky + Math.cos(a - beug) * 12);
+    dick(hx, hy, kx, ky, 5, c); dick(kx, ky, fx, fy, 4, c); F2.rect(Math.round(fx) - 2, Math.round(fy) - 1, 7, 3, cs);
+  };
+  const arm = (ph, c) => {                                           // Schulter -> Ellbogen -> Hand
+    const a = laeuft ? -Math.sin(ph) * 0.5 : 0.08, sx = X, sy = y0 - 42;
+    const ex = sx + Math.sin(a) * 9, ey = sy + Math.cos(a) * 9, hx = ex + Math.sin(a + 0.35) * 8, hy = ey + Math.cos(a + 0.35) * 8;
+    dick(sx, sy, ex, ey, 3, c); dick(ex, ey, hx, hy, 3, c); F2.rect(Math.round(hx) - 1, Math.round(hy) - 1, 3, 3, SK[1]);
+  };
+  bein(p + Math.PI, HO[0], SCH[0]); arm(p, HE[0]);                   // hinten, dunkler
+  for (let r = 0; r < 18; r++) {                                     // Rumpf: abfallende Schultern, zur Hüfte schmaler
+    const yy = y0 - 44 + r, b = r === 0 ? 8 : r === 1 ? 11 : Math.round(12 - r * 0.12);
+    const x0 = X - Math.floor(b / 2);
+    F2.rect(x0, yy, b, 1, HE[1]); F2.rect(x0, yy, 2, 1, HE[0]);
+  }
+  F2.rect(X - 5, y0 - 27, 11, 2, HO[0]);                             // Gürtel
+  bein(p, HO[1], SCH[1]); arm(p + Math.PI, HE[1]);                   // vorn
+  F2.rect(X - 1, y0 - 46, 4, 3, SK[1]);                              // Hals
+  for (let r = 0; r < 10; r++) {                                     // Kopf, zur Gehrichtung gedreht
+    const b = [5, 7, 9, 9, 9, 9, 9, 8, 7, 5][r], x0 = X + 1 - Math.floor(b / 2), yy = y0 - 56 + r;
+    F2.rect(x0, yy, b, 1, SK[2]); F2.rect(x0, yy, 1, 1, SK[1]);
+  }
+  F2.rect(X - 2, y0 - 57, 7, 2, HA[1]); F2.rect(X - 3, y0 - 55, 9, 2, HA[1]); F2.rect(X - 4, y0 - 53, 3, 4, HA[0]);   // Haar, hinten tiefer
+  F2.rect(X + 1, y0 - 56, 3, 1, HA[2]);
+  F2.rect(X + 2, y0 - 51, 1, 2, BLACK); F2.rect(X + 4, y0 - 51, 1, 2, BLACK);   // Augen auf halber Kopfhöhe
+  F2.rect(X + 5, y0 - 49, 1, 1, SK[1]); F2.rect(X + 2, y0 - 48, 3, 1, SK[0]);   // Nase, Mund
+}
+
 function drawSprite(rows, px, py, map) {
   for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) {
     const c = rows[y][x]; if (c === '.') continue;
@@ -9864,8 +9917,9 @@ function renderWalk(t) {
   for (const sg of (W.signs || [])) {
     const sx = Math.round(sg.at * 3 - cam + 140);
     if (sx < -80 || sx > SW + 10) continue;
-    Screen.rect(sx, 88, 2, 24, neu ? HOLZ[2] : ORANGE);
     const lw = [...sg.text].length * 8 + 6;              // Schilder schreiben mit textScroll in der alten Schrift (8 Punkte je Zeichen), auch in feinen Kapiteln
+    Screen.rect(sx, 88, 2, 24, neu ? HOLZ[2] : ORANGE);
+    if (lw > 40) Screen.rect(sx + lw - 6, 88, 2, 24, neu ? HOLZ[2] : ORANGE);   // seit 2026-11-19: lange Schilder stehen auf zwei Pfosten
     Screen.rect(sx - 2, 80, lw, 11, neu ? HOLZ[1] : BROWN);
     Screen.frame(sx - 2, 80, lw, 11, neu ? HOLZ[4] : ORANGE);
     textScroll(sg.text, sx + 1, 82, neu ? LICHT[1] : YELLOW);
@@ -9889,7 +9943,8 @@ function renderWalk(t) {
   // Figur und Mathematthias als Begleiter
   const walking = w.go || w.burst > 0;
   const frame = walking ? (Math.floor(w.step * 6) % 2) : 1;
-  drawSprite2x(WALKER[frame], 110, 84, { '8': BROWN, '7': ORANGE, '3': LTBLUE, '1': WHITE });
+  if (Screen.fein) wandererFein(238, 224, w.step * 6 * Math.PI / 2, walking);   // seit 2026-11-19 fein gemalt (Matthias: Augen zu tief, Buckel auf den Schultern)
+  else drawSprite2x(WALKER[frame], 110, 84, { '8': BROWN, '7': ORANGE, '3': LTBLUE, '1': WHITE });
   drawPortrait(SPEAKERS.math.art(), 40, 22 + Math.round(Math.sin(t * 2.4) * 4));   // schwebt mit
 
   // Unterwegs spricht jemand - die Figur wartet, bis weitergeklickt wird
@@ -11132,6 +11187,38 @@ FM.huntKachel = function (x, y, w, an) {
   for (const wx of [14, W - 15]) { FM.D(X + wx, Y + 30, 4.5, STEIN[0]); FM.D(X + wx, Y + 30, 3.3, STEIN[3]); FM.D(X + wx, Y + 30, 1.2, DUNST[2]); }
 };
 
+/* Das beschlagene Steigerbuch als Fundstück (Kapitel 3, seit 2026-11-19): Lederdeckel mit Rücken, vier Eckbeschläge und
+   ein Titelschild aus Tangentia-Silber oder Gold, Licht von links oben. Ersetzt den Beschlag-Ablauf (Matthias: weglassen). */
+function buchBild(stufe) {
+  return function (hx, hy, z, t) {
+    const N = 16 * z, M = BESCHLAG[stufe], kl = (v, a, b) => Math.max(a, Math.min(b, v)), L = [HOLZ[0], HOLZ[1], HOLZ[2], HOLZ[3]];
+    const x0 = 0.16, x1 = 0.86, y0 = 0.10, y1 = 0.90, e = 0.17, glanz = ((t * 0.5) % 2.4) - 0.6;
+    for (let py = 0; py < N; py++) for (let px = 0; px < N; px++) {
+      const u = (px + 0.5) / N, v = (py + 0.5) / N;
+      if (u < x0 - 0.04 || u > x1 || v < y0 || v > y1) continue;
+      let c;
+      if (u < x0) c = v < y0 + 0.02 || v > y1 - 0.02 ? L[0] : (Math.floor(v * N / 3) % 4 ? L[1] : L[0]);   // Rücken mit Bünden
+      else {
+        const a = u - x0, b = v - y0, a2 = x1 - u, b2 = y1 - v;
+        const ecke = (a + b < e) || (a2 + b < e) || (a + b2 < e) || (a2 + b2 < e);
+        const schild = Math.abs(u - 0.52) < 0.15 && Math.abs(v - 0.38) < 0.07;
+        if (ecke || schild) {
+          let l = 0.75 - (u + v) * 0.35 + (Math.abs((u + v) - glanz) < 0.06 ? 0.5 : 0);
+          c = M[kl(Math.round(l * (M.length - 1)), 0, M.length - 1)];
+          if (schild && (Math.abs(u - 0.52) > 0.135 || Math.abs(v - 0.38) > 0.055)) c = M[1];
+        } else {
+          const l = 2.4 - (u + v) * 1.2 + (Math.sin(px * 1.7 + py * 2.3) > 0.92 ? 0.4 : 0);
+          c = L[kl(Math.round(l), 0, 3)];
+          if (a < 0.012 || a2 < 0.012 || b < 0.012 || b2 < 0.012) c = L[0];
+        }
+      }
+      F2.rect(hx + px, hy + py, 1, 1, c);
+    }
+  };
+}
+GABEN.buchSilber = buchBild(2);
+GABEN.buchGold = buchBild(3);
+
 /* ===== 65_erklaer_render.js ===== */
 /* ============================================================
    BILDSCHIRME DER ERKLÄRINSEL
@@ -11206,7 +11293,7 @@ function renderMapE(t) {
     // erledigte Station: lässt sich wieder anwählen (leicht oder Meisterprobe); die Seite steht im Buch
     const fertig = st.state === ST_DONE;
     info = !fertig ? sd.line : (!st.ek.m && sd.meisterLine ? sd.doneLine + ' ' + sd.meisterLine : sd.doneLine);
-    status = !fertig ? 'Seite fehlt noch.' : (st.ek.m ? 'Gemeistert.' : 'Meisterprobe offen.');
+    status = !fertig ? '' : (st.ek.m ? 'Gemeistert.' : 'Meisterprobe offen.');
     label = !fertig ? 'Hingehen' : 'Nochmal';
   }
   panel(4, 128, 312, 56, colP);
@@ -11473,6 +11560,9 @@ function renderFahrt(t, em) {
   // Tempo-Schild: eine Ziffer über der Tür, eine Kommazahl groß an der Wand links neben der Tür
   { const tx = ekZahl(F.vTuer); if (tx.length === 1) tempoSchild(dx + 6, 43, tx); else tempoSchild(dx - 22, 59, tx); }
   if (em.knall > 0) Screen.textPx('RUMMS!', dx - 20, 56, LTRED);
+  // nach dem dritten Fehlversuch: ab etwa 6 m warnt Mandy, wenn der Hunt zu schnell ist (seit 2026-11-19)
+  if (em.fehl >= 3 && em.phase === 'fahrt' && em.s >= 6 && em.s < F.tuer && ekRund1(em.v) > F.vTuer + 1e-9 && Math.floor(t * 4) % 2 === 0)
+    { Screen.rect(Math.round(X(em.s)) - 30, 52, 44, 11, BLACK); Screen.textPx('Langsam!', Math.round(X(em.s)) - 27, 54, YELLOW); }
   // Mandy schiebt den Hunt
   const hx = X(em.s), step = em.v > 0.1 ? Math.floor(t * 8) % 2 : 0;
   if (Screen.fein && FM.an) { FM.mandy(hx * 2, 178, t, em.v > 0.1); FM.hunt(hx * 2, 175, true, em.s / 0.3); }   // fein seit 2026-11-18
@@ -11498,7 +11588,7 @@ function renderFahrt(t, em) {
   if (em.phase === 'fahrt') linie(GX(em.log[em.log.length - 1][0]), GY(em.log[em.log.length - 1][1]), GX(em.zeit), GY(em.s), WHITE);
   /* Schablone (seit 2026-11-16): ein Steigungsdreieck auf Höhe der Tür, so steil wie das erlaubte Tempo. Es läuft mit der
      Zeit mit, bis der Hunt an der Tür ist - dort sieht man, ob der eigene Graph steiler ist. */
-  { const tz = Math.max(2, em.tTuer !== null ? em.tTuer : em.zeit), d = 2;
+  if (em.fehl >= 1 || em.hintN >= 2) { const tz = Math.max(2, em.tTuer !== null ? em.tTuer : em.zeit), d = 2;   // seit 2026-11-19 erst nach dem ersten Fehlversuch (Matthias)
     const x1 = GX(tz - d), x2 = GX(tz + d), y1 = GY(F.tuer - F.vTuer * d), y2 = GY(F.tuer + F.vTuer * d);
     linie(x1, y1, x2, y1, ORANGE, 2, 106, 172); linie(x2, y1, x2, y2, ORANGE, 2, 106, 172);
     linie(x1, y1, x2, y2, YELLOW, 0, 106, 172);
@@ -12739,6 +12829,148 @@ const TIERE = {
     BACKGROUNDS[name] = neu;
   }
 })();
+
+/* ===== 69_zurueck.js ===== */
+/* ===== Zurück, Bildschirmcode und Fußzeile (seit 2026-11-19, Wunsch von Matthias) =====
+
+   Z (oder Tippen auf „Z zurück" in der Fußzeile):
+   - immer: in einem Gespräch eine Seite bzw. eine Szene zurück (nur Text, ändert nichts am Spielstand);
+   - im Testmodus: auf jeden früheren Bildschirm zurück (Abbild des ganzen Spielzustands beim Betreten).
+     Im normalen Spiel nicht, sonst ließen sich falsche Antworten ungeschehen machen.
+
+   Testmodus: Adresse mit ?test (kapitel3.html?test, geht auch als Datei) oder localStorage fab.test = 1.
+   Dann steht rechts unten ein kleiner Bildschirmcode, z. B. „K3 S47.2" = Kapitel 3, Szene 47, Seite 2.
+   Szenennummern zählen alle Szenen des Kapitels in der Reihenfolge der Inhaltsdatei (`node szenen.js 3`).
+   Abschalten: TESTMODUS unten auf false setzen oder ?test weglassen.
+
+   Fußzeile (Kapitel mit fussZeile: true, zuerst K3): links fest „K Karte  Q Pause  Z zurück",
+   rechts im Wechsel der Hinweis des Bildschirms und ein Tipp aus fussTipps. */
+
+const TESTMODUS = (() => { try { return /[?&]test\b/.test(location.search) || localStorage.getItem('fab.test') === '1'; } catch (e) { return false; } })();
+
+/* ---- Szenennummern ---- */
+const SZ = { nr: null, text: null, inhalt: null };
+function szAufbau() {
+  SZ.nr = new WeakMap(); SZ.text = new Map(); SZ.inhalt = new WeakSet();
+  let n = 0;
+  const lauf = v => {
+    if (!v || typeof v !== 'object' || SZ.inhalt.has(v)) return;
+    SZ.inhalt.add(v);
+    if (!Array.isArray(v) && typeof v.text === 'string' && (v.bg || v.speaker || v.music)) {
+      n++; SZ.nr.set(v, n); if (!SZ.text.has(v.text)) SZ.text.set(v.text, n);
+    }
+    for (const k in v) lauf(v[k]);
+  };
+  lauf(Game.chapter);
+}
+function szNr(sz) {
+  if (!sz) return '?';
+  if (!SZ.nr) szAufbau();
+  return SZ.nr.get(sz) || SZ.text.get(sz.text) || ('?' + (sz.bg || ''));
+}
+
+/* ---- Bildschirmcode: kurz zum Anzeigen; Signatur: bestimmt, wann ein neuer Bildschirm beginnt ---- */
+function bildCode() {
+  const G = Game;
+  if (G.mode !== 'play') return G.mode;
+  const st = G.cur >= 0 && G.stations[G.cur];
+  switch (G.view) {
+    case 'talk': return 'S' + szNr(G.talk && G.talk.list[G.talk.i]) + (G.page ? '.' + (G.page + 1) : '');
+    case 'walk': return 'W' + (G.walk ? G.walk.said : 0) + (G.walk && G.walk.talking ? 's' : '');
+    case 'map': return 'M' + G.sel;
+    case 'task': case 'mini': return 'A' + G.cur + '-' + (st ? st.ti : 0) + (G.taskPhase ? G.taskPhase[0] : '');
+    case 'emini': return 'E' + G.cur + (G.em && G.em.meister ? 'M' : '') + (G.em && G.em.phase ? G.em.phase[0] : '') + (G.em && (G.em.won || G.em.msg) ? '!' : '');
+    case 'ekfrage': return 'F' + G.cur;
+    case 'buch': return 'B' + (G.buch ? G.buch.page + '.' + G.buch.sub : '');
+    case 'gate': return 'T' + G.gateIx + '-' + (G.gate ? G.gate.i : 0) + (G.gate && G.gate.phase === 'fb' ? 'f' : '');
+    case 'boss': return 'X' + (G.boss ? G.boss.q : 0) + (G.boss && G.boss.phase !== 'ask' ? G.boss.phase[0] : '');
+    case 'gabe': return 'G' + (G.gabe ? G.gabe.st : '');
+  }
+  return G.view;
+}
+
+/* ---- Abbild des Spielzustands (nur Testmodus) ---- */
+const ZR = { stapel: [], sig: '' };
+function zKopie(v, memo) {
+  if (v === null || typeof v !== 'object') return v;
+  if (SZ.inhalt && SZ.inhalt.has(v)) return v;                   // Inhalt des Kapitels: nur verweisen
+  if (memo.has(v)) return memo.get(v);
+  if (Array.isArray(v)) { const a = []; memo.set(v, a); for (const x of v) a.push(zKopie(x, memo)); return a; }
+  const p = Object.getPrototypeOf(v);
+  if (p !== Object.prototype && p !== null) return v;            // Leinwand, Map, Audio …
+  const o = {}; memo.set(v, o); for (const k in v) o[k] = zKopie(v[k], memo); return o;
+}
+function zAbbild() {
+  const s = {}, memo = new Map();
+  for (const k of Object.keys(Game)) if (k !== 'chapter' && typeof Game[k] !== 'function') s[k] = zKopie(Game[k], memo);
+  return { s, musik: Sound.song ? Sound.song.name : null };
+}
+function zHerstellen(a) {
+  const memo = new Map();
+  for (const k of Object.keys(Game)) if (k !== 'chapter' && typeof Game[k] !== 'function' && !(k in a.s)) Game[k] = undefined;
+  for (const k in a.s) Game[k] = zKopie(a.s[k], memo);
+  if (a.musik && (!Sound.song || Sound.song.name !== a.musik)) Sound.play(a.musik);
+}
+
+/* jedes Bild: beginnt ein neuer Bildschirm, im Testmodus das Abbild merken */
+function zPruefen() {
+  if (Game.mode !== 'play') { if (Game.mode !== 'end') { ZR.stapel = []; ZR.sig = ''; } return; }
+  if (!SZ.nr) szAufbau();
+  const sig = bildCode();
+  if (sig === ZR.sig) return;
+  ZR.sig = sig;
+  if (TESTMODUS) { ZR.stapel.push(zAbbild()); if (ZR.stapel.length > 80) ZR.stapel.shift(); }
+}
+
+function zMeldung(txt) { Game.msg = txt; Game.msgT = 1.6; Game.msgCol = LTGREY; }
+
+/* Z: eine Stufe zurück. true, wenn die Taste verbraucht ist */
+function zurueck() {
+  const G = Game;
+  if (G.mode !== 'play') return false;
+  if (TESTMODUS) {
+    if (ZR.stapel.length < 2) { zMeldung('Weiter zurück geht nicht.'); return true; }
+    ZR.stapel.pop();
+    zHerstellen(ZR.stapel[ZR.stapel.length - 1]);
+    ZR.sig = bildCode(); Sound.sfx('move');
+    return true;
+  }
+  if (G.view === 'talk' && G.talk) {                             // ohne Testmodus: nur im Gespräch zurückblättern
+    if (G.page > 0) G.page--;
+    else if (G.talk.i > 0) { G.talk.i--; G.page = Math.max(0, talkPages(G.talk.list[G.talk.i]).length - 1); G.talkSel = 0; }
+    else { zMeldung('Weiter zurück geht nicht.'); return true; }
+    G.typing = false; G.typed = 1e9; Sound.sfx('move');
+    return true;
+  }
+  zMeldung('Zurück geht nur im Gespräch.');
+  return true;
+}
+
+/* Bildschirmcode rechts unten (nur Testmodus) */
+function zCodeZeichnen() {
+  if (!TESTMODUS) return;
+  const c = 'K' + Game.chapterId + ' ' + bildCode(), w = tw(c) + 4;
+  Screen.rect(SW - w, SH - 17, w, 9, BLACK);
+  Screen.textPx(c, SW - w + 2, SH - 16, ORANGE);
+}
+
+/* Fußzeile mit festen Tasten und wechselndem Tipp (Kapitel mit fussZeile) */
+function fussNeu(txt, col) {
+  const K = Game.chapter, fest = 'K Karte  Q Pause  Z zurück';
+  Screen.rect(0, SH - 8, SW, 8, DGREY);
+  const xQ = 2 + tw('K Karte  '), xZ = 2 + tw('K Karte  Q Pause  ');
+  Screen.textPx(fest, 2, SH - 8, LTGREY);
+  hot(0, SH - 9, xQ - 4, 9, { taste: 'k' }); hot(xQ - 2, SH - 9, xZ - xQ, 9, { taste: 'q' }); hot(xZ - 2, SH - 9, tw('Z zurück') + 6, 9, { taste: 'z' });
+  const eigen = (txt || '').replace(/\[K\]\s*(Karte|zu)/g, '').replace(/\[Q\]\s*Pause|Q Pause/g, '').replace(/\[(\w)\]/g, '$1')
+    .replace(/,\s*,/g, ',').replace(/\s{2,}/g, '  ').replace(/^[\s,]+|[\s,]+$/g, '');
+  const tipps = (K.fussTipps || []).slice(), liste = eigen ? [eigen] : [];
+  const n = Math.floor(Game.t / 5), wahl = tipps.length ? tipps[Math.floor(n / (eigen ? 2 : 1)) % tipps.length] : '';
+  const zeig = liste.length && (n % 2 === 0 || !wahl) ? eigen : wahl;
+  const x0 = xZ + tw('Z zurück') + 10, platz = SW - x0 - 2;
+  let z = zeig || '';
+  while (z && tw(z) > platz) z = z.slice(0, -1);
+  if (z) Screen.textPx(z, x0, SH - 8, col === undefined ? (z === eigen ? WHITE : LTGREY) : col);
+}
 
 /* ===== 70_content.js ===== */
 /* ============================================================
@@ -14085,6 +14317,7 @@ function checkCode() {
 
 /* ---------------- Aktionen (Tippen und Tasten laufen hier zusammen) ------- */
 function act(a) {
+  if (a.taste) { onKey(a.taste); return; }                             // Fußzeile: Taste antippen
   if (a.menu !== undefined) { Game.sel = a.menu; menuActivate(); return; }
   if (a.helpNext) { helpNext(); return; }
   if (a.title) { Game.mode = 'title'; Game.sel = 0; Sound.setLayer('full'); Sound.play('title'); blurHidden(); return; }
@@ -14232,6 +14465,7 @@ function onKey(k) {
   if (Game.mode !== 'play') return;
 
   if (k === 'q' || k === 'Q') { Game.save(); Game.finish(0); return; }
+  if ((k === 'z' || k === 'Z') && zurueck()) return;                  // zurück (69_zurueck.js)
   if (Game.isEk() && ekKey(k)) return;
   if ((k === 'k' || k === 'K') && (Game.view === 'task' || Game.view === 'mini')) { Game.abortTask(); return; }
   if ((k === 'h' || k === 'H') && (Game.view === 'task' || Game.view === 'mini') && Game.taskPhase === 'ask') { Game.useHint(); return; }
@@ -14376,6 +14610,7 @@ function frame(ts) {
   if (Game.boss) { Game.boss.shake = Math.max(0, Game.boss.shake - dt); Game.boss.flashT = Math.max(0, Game.boss.flashT - dt); }
   if (Game.msgT > 0) Game.msgT -= dt;
 
+  zPruefen();
   Screen.clear(BLACK);
   switch (Game.mode) {
     case 'title':   renderTitle(t); break;
@@ -14418,6 +14653,7 @@ function frame(ts) {
     Screen.textPx(Game.msg, SW - w - 1, 12, Game.msgCol);
   }
 
+  zCodeZeichnen();
   showCodeBox(Game.mode === 'end');
   showPdfLink(Game.isEk() && Game.stations.length && Game.ekAllPages() &&
               (Game.mode === 'end' || (Game.mode === 'play' && Game.view === 'buch')));
