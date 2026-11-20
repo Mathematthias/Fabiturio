@@ -332,7 +332,7 @@ const Input = {
     // Loslassen. Deshalb hier synchron nachfassen, nicht erst im naechsten Bild.
     canvas.addEventListener('touchend', e => {
       const t = e.changedTouches[0];
-      if (t && typeof syncTap === 'function') syncTap(Screen.toLogical(t.clientX, t.clientY));
+      if (t && typeof syncTap === 'function') syncTap(Screen.toLogical(t.clientX, t.clientY), true);
       Sound.unlock(); Sound.resume();
       this.down = false;
       this.queue.push({ type: 'release' });
@@ -2708,6 +2708,8 @@ const Game = {
       this.view = 'mini';
       this.mini = { sel: 0, checked: false, ok: false, lauf: false, zu: false };
       for (const k of miniKeys(this.task)) this.mini[k] = this.task['start' + k];
+      // Minispiel mit Wahl (K5 Solarfeld, 2026-11-20): leicht oder schwer; die Wahl gilt für diese Teilaufgabe, auch nach neuen Zahlen
+      if (this.task.wahl) { if (st.stufe === undefined) this.mini.waehle = true; else this.miniStufe(st.stufe, true); }
       Sound.setLayer('soft'); Sound.play(sd.music || 'field');
     } else {
       this.view = 'task';
@@ -2724,6 +2726,15 @@ const Game = {
     // Ein selbst geholter Tipp kostet ein Fünftel der Aufgabe: 10 Punkte bei 50, 6 bei 30
     const p = Math.max(0, Math.round(base * (this.task.pts / 50)) - manual * Math.round(10 * this.task.pts / 50));
     return p;
+  },
+
+  miniStufe(i, still) {
+    const T = this.task, st = this.curSt();
+    if (!T || !T.wahl) return;
+    if (i > 0 && T.wahl[i]) Object.assign(T, T.wahl[i]);
+    T.stufe = i; st.stufe = i; this.mini.waehle = false;
+    for (const k of miniKeys(T)) this.mini[k] = T['start' + k];
+    if (!still) { Sound.sfx('move'); this.save(); }
   },
 
   useHint() {
@@ -2762,9 +2773,13 @@ const Game = {
       if (this.ohneSperre()) st.tries = 2;                   // auf der Ausflugsinsel und beim Üben schließt keine Station
       else { this.lockStation(); return; }
     }
-    if (this.task.hints && st.hints < st.tries && st.hints < this.task.hints.length) {
+    // Minispiele decken weiter einen Tipp auf. Bei Auswahlaufgaben nicht mehr (Studierende, 2026-11-20: der Tipp zeigte oft
+    // auf den Schritt, der schon richtig war); dort steht der Fehlerbildschirm mit Lösung und Rechenweg.
+    if (this.task.kind === 'mini' && this.task.hints && st.hints < st.tries && st.hints < this.task.hints.length) {
       st.hints++; st.auto = (st.auto || 0) + 1;
     }
+    this.tipMehr = false;
+    if (this.task.kind !== 'mini') this.task.mehr = (this.task.hints || []).concat(this.task.explain && this.task.explain.length > 3 ? ['Kurz gesagt: ' + this.task.explain] : []);
     const V = this.villain() || {};
     this.oopsLine = pickLine(V.oops || this.chapter.oops, "Oh nein! F'Abiturio dreht an den Zahlen!");
     this.gloatLine = pickLine(V.gloat || this.chapter.gloat, 'Hihi! Neuer Schabernack!');
@@ -3244,7 +3259,7 @@ function makeTransfer(chapterId, name, code) {
 
 function parseTransfer(s) {
   const t = (s || '').toUpperCase().replace(/\s+/g, '');
-  const m = t.match(/^FAB-K(\d+)-([A-Z0-9]{2,12})-([A-Z0-9-]{12,120})$/);
+  const m = t.match(/^FAB-K(\d+)-([A-Z0-9]{2,12})-([A-Z0-9-]{12,280})$/);
   if (!m) return null;
   return { kap: parseInt(m[1], 10), name: m[2], code: m[3].replace(/-/g, '') };
 }
@@ -3297,7 +3312,12 @@ const EK_PENDEL = { x0: 2, hs: [1, 0.5, 0.1, 0.01, 0.001], hsMeister: [-1, -0.5,
    Vorher 60 m / 40 m / 5 / 2 / 3; alles mit 0,3 verkleinert, eine Fahrt dauert so lange wie zuvor.
    bremse: Der Hunt rollt beim Loslassen aus (im alten Maßstab 1,2 statt 3 m/s²). Vorher stand er aus voller
    Fahrt sofort; um die Tür langsam genug zu passieren, blieb ein Fenster von 0,13 s zum Loslassen. */
-const EK_FAHRT = { lang: 18, tuer: 12, vmax: 1.5, schub: 0.75, bremse: 0.36, vTuer: 0.5, schnittMeister: 1 };
+/* Fahrt seit 2026-11-20 mit Gas und Bremse (Studierende: nur mit Stottertippen zu schaffen): schub = Gas, bremse = Bremse,
+   rollen = ohne beides rollt der Hunt sanft aus */
+const EK_FAHRT = { lang: 18, tuer: 12, vmax: 1.5, schub: 0.6, bremse: 1.0, rollen: 0.12, vTuer: 0.5, schnittMeister: 1 };
+/* Knöpfe unter dem Fahrtenschreiber (alte Koordinaten) */
+const FAHRT_KNOPF = { brems: { x: 4, y: 174, w: 116, h: 16 }, gas: { x: 200, y: 174, w: 116, h: 16 } };
+function fahrtKnopf(p, k) { const b = FAHRT_KNOPF[k]; return !!(p && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y - 2 && p.y <= b.y + b.h + 2); }
 const EK_PLAN = { halte: [0, 1, 2, 3, 4, 5, 6], raster: 0.3, vmin: -1.2, vmax: 3 };
 
 function ekLatteSteigung(a, w) { return (EKF.stollen(a + w) - EKF.stollen(a)) / w; }
@@ -3563,14 +3583,15 @@ Object.assign(Game, {
   },
 
   /* Fahrtenschreiber: läuft in Echtzeit, push = es wird geschoben */
-  ekFahrtUpdate(dt, push) {
+  ekFahrtUpdate(dt, push, brems) {
     const em = this.em, F = EK_FAHRT;
     if (!em || em.kind !== 'fahrt' || em.won || em.msg) return;
     if (em.knall > 0) em.knall -= dt;
     if (em.phase === 'bereit') { if (push) em.phase = 'fahrt'; else return; }
     if (em.phase === 'aus') { em.ausT += dt; return; }
     const s0 = em.s;
-    em.v = Math.max(0, Math.min(F.vmax, em.v + (push ? F.schub : -F.bremse) * dt));
+    em.gas = !!push && !brems; em.brems = !!brems;
+    em.v = Math.max(0, Math.min(F.vmax, em.v + (brems ? -F.bremse : push ? F.schub : -F.rollen) * dt));
     em.s += em.v * dt; em.zeit += dt;
     if (s0 < F.tuer && em.s >= F.tuer) { em.vTuer = em.v; em.tTuer = em.zeit; if (ekRund1(em.v) > F.vTuer + 1e-9) { em.knall = 0.6; Sound.sfx('damage'); } else Sound.sfx('unlock'); }
     const last = em.log[em.log.length - 1];
@@ -3742,6 +3763,7 @@ Object.assign(Game, {
     }
     this.wrong++; this.taskOk = false;
     this.wrongWhy = T.options[i].why || 'Das war es noch nicht.';
+    this.tipMehr = false; T.mehr = (T.hints || []).concat(T.explain ? ['Kurz gesagt: ' + T.explain] : []);
     if (T.ekWahl) st.ek.mw = Math.min(3, st.ek.mw + 1); else st.ek.pw = Math.min(3, st.ek.pw + 1);
     this.oopsLine = pickLine(this.chapter.oops, "Oh nein!");
     this.gloatLine = pickLine(this.chapter.gloat, 'Hihi!');
@@ -10291,13 +10313,14 @@ function renderTip(t) {
   panel(4, 14, 312, 176, YELLOW);
   Screen.rect(12, 10, 164, 9, YELLOW);
   Screen.textPx('Mathematthias hilft', 16, 11, BLACK);
-  // Erst die Erklärung, was schiefging ...
+  if (fehlerSchirm(s)) { renderFehler(t, s); return; }
+  // Minispiele und die Auswahl am Ende eines K3-Minispiels: die Erklärung, was schiefging ...
   let y = 24;
   for (const ln of wrapText(Game.wrongWhy || 'Das war nicht ganz richtig.', 37).slice(0, 6)) {
     Screen.textPx(ln, 12, y, LTRED); y += 9;
   }
-  // ... dann der Tipp der nächsten Stufe
-  if (s.hints && st.hints > 0) {
+  // ... dann der Tipp, den es schon gibt (ein Minispiel deckt keinen neuen auf)
+  if (s.hints && st && st.hints > 0) {
     y += 6;
     Screen.textPx('Tipp ' + st.hints + ' von ' + s.hints.length + ':', 12, y, YELLOW); y += 11;
     const h = s.hints[Math.min(st.hints, s.hints.length) - 1];
@@ -10306,6 +10329,68 @@ function renderTip(t) {
   drawPortrait(SPEAKERS.math.art(), 272, 146);
   footer('');
   hot(0, 8, SW, SH - 16, { next: true });
+}
+
+/* Fehlerbildschirm (Rückmeldung der Studierenden, 2026-11-20): bei Auswahlaufgaben steht da, was gewählt wurde, was
+   richtig gewesen wäre und wo der Denkfehler steckt; „Ausführlich" zeigt den Rechenweg aus Tipps und Erklärung.
+   Danach kommen wie bisher neue Zahlen. */
+function fehlerSchirm(s) { return !!(s && s.kind !== 'mini' && !s.ekWahl && s.options && Game.pick >= 0 && s.options[Game.pick]); }
+
+/* Umbruch nach Pixelbreite (breite Schrift in K1/K2, schmale ab K3 fein); Wörter bleiben ganz */
+function wrapPx(text, w) {
+  const out = [];
+  for (const absatz of String(text || '').split('\n')) {
+    let z = '';
+    for (const wort of absatz.split(' ')) {
+      const neu = z ? z + ' ' + wort : wort;
+      if (z && tw(neu) > w) { out.push(z); z = wort; } else z = neu;
+    }
+    out.push(z);
+  }
+  return out;
+}
+const FEHLER_X = () => 12 + Math.max(tw('Deine Antwort:'), tw('Richtig wäre:')) + 8;
+
+function fehlerZeile(lab, o, y, col) {
+  if (lab) Screen.textPx(lab, 12, y, LTGREY);
+  let x = FEHLER_X(); const f = optF(o);
+  if (f) {
+    const bx = fxParse(f);
+    if (bx.w > 304 - x) { x = 20; y += 10; drawFormulaAt(f, x, y - 2, col); return 10 + Math.max(12, bx.asc + bx.desc + 4); }   // breite Formel: eine Zeile tiefer
+    drawFormulaAt(f, x, y - 2, col); return Math.max(12, bx.asc + bx.desc + 4);
+  }
+  const zl = wrapPx(o.t, 304 - x).slice(0, 2);
+  zl.forEach((ln, i) => Screen.textPx(ln, x, y + i * 9, col));
+  return zl.length * 9 + 3;
+}
+
+function renderFehler(t, s) {
+  const gew = s.options[Game.pick], ok = s.options.find(o => o.ok);
+  const mehr = Game.tipMehr && s.mehr && s.mehr.length;
+  const breit = 294, schmal = 254;      // Pixel; schmal: neben Mathematthias unten rechts
+  let y = 24;
+  if (!mehr) {
+    y += fehlerZeile('Deine Antwort:', gew, y, LTRED);
+    if (ok) y += fehlerZeile('Richtig wäre:', ok, y, LTGREEN);
+    y += 4;
+    Screen.textPx('Wo es hakt:', 12, y, YELLOW); y += 10;
+    for (const ln of wrapPx(Game.wrongWhy || 'Das war nicht ganz richtig.', breit).slice(0, 7)) { Screen.textPx(ln, 12, y, WHITE); y += 9; }
+  } else {
+    Screen.textPx('So geht es:', 12, y, YELLOW); y += 11;
+    if (s.formula) { const bx = fxParse(s.formula); if (bx.w <= 250) { drawFormulaAt(s.formula, 14, y, LTBLUE); y += bx.asc + bx.desc + 5; } }
+    let voll = false;
+    s.mehr.forEach((h, i) => {
+      const zl = wrapPx(h, schmal - tw('1. '));
+      if (voll || y + zl.length * 9 > 152) { voll = true; return; }
+      zl.forEach((ln, k) => { Screen.textPx((k ? '   ' : (i + 1) + '. ') + ln, 12, y, WHITE); y += 9; });
+      y += 2;
+    });
+    if (ok && !voll && y < 148) { Screen.textPx('Also:', 12, y, LTGREY); fehlerZeile('', ok, y, LTGREEN); }
+  }
+  drawPortrait(SPEAKERS.math.art(), 272, 146);
+  footer(' Weiter: neue Zahlen' + (s.mehr && s.mehr.length ? '   [A] ' + (mehr ? 'kurz' : 'ausführlich') : ''));
+  hot(0, 8, SW, SH - 16, { next: true });
+  if (s.mehr && s.mehr.length) button(12, 168, 118, 14, mehr ? 'Kurz' : 'Ausführlich', { tipMehr: true }, mehr ? DGREY : BLUE, WHITE);
 }
 
 /* ---------------- Falsch, Schritt 2: F'Abiturio dreht an den Zahlen ---------------- */
@@ -10341,6 +10426,21 @@ function renderMorph(t) {
 function renderMini(t) {
   const s = Game.task, m = Game.mini;
   Screen.clear(BLACK);
+  if (m.waehle) {                                // Wahl vor dem Minispiel: leicht oder schwer (K5 Solarfeld)
+    Screen.textPx(s.title, 2, 10, LTGREEN);
+    Screen.textPx('Wie willst du es lösen?', 2, 24, WHITE);
+    s.wahl.forEach((w, i) => {
+      const y = 40 + i * 62, an = (m.wsel || 0) === i;
+      panel(10, y, 300, 54, an ? YELLOW : DGREY);
+      Screen.textPx((i + 1) + '  ' + w.wahlName, 20, y + 8, an ? YELLOW : WHITE);
+      wrapPx(w.wahlText, 276).slice(0, 3).forEach((ln, k) => Screen.textPx(ln, 20, y + 22 + k * 9, LTGREY));
+      hot(10, y, 300, 54, { miniWahl: i });
+    });
+    Screen.textPx('Beide geben gleich viele Punkte.', 10, 170, GREY);
+    footer(' 1 oder 2 wählen   [K] Karte');
+    hot(88, SH - 8, 80, 8, { map: true });
+    return;
+  }
   const st = Game.curSt();
   if (st.hints > 0 && s.hints) {
     const h = s.hints[Math.min(st.hints, s.hints.length) - 1];
@@ -10364,7 +10464,7 @@ function renderMini(t) {
   const ax = Math.round(X(Math.max(xmin, Math.min(xmax, 0))));
   Screen.rect(L, Math.round(Y(0)), R - L, 1, GREY);
   Screen.rect(ax, T, 1, B - T, GREY);
-  for (let gy = Math.ceil(ymin); gy <= ymax; gy += 2) {
+  for (let gy = Math.ceil(ymin); gy <= ymax; gy += (s.kaestchen ? s.gy : 2)) {    // mit Kästchen: Achse in Kästchenschritten
     const py = Math.round(Y(gy));
     if (py < T || py > B - 5 || gy === 0) continue;
     Screen.rect(ax - 2, py, 3, 1, GREY);
@@ -10392,17 +10492,25 @@ function renderMini(t) {
     const a0 = s.von || 0, gr = Math.max(a0, Math.min(xmax, m.A)), y0 = Math.round(Y(0));
     for (let fx = Math.round(X(a0) * 2); fx <= Math.round(X(gr) * 2); fx++) {
       const xx = (fx / 2 - L) / (R - L) * (xmax - xmin) + xmin, yy = Math.round(Y(Math.max(0, s.kurve(xx))) * 2);
-      if (Screen.fein) F2.rect(fx, yy, 1, Math.max(0, y0 * 2 - yy), (fx + (yy >> 2)) % 9 ? BLUE : LTBLUE); else if (fx % 2 === 0) Screen.rect(fx >> 1, yy >> 1, 1, Math.max(0, y0 - (yy >> 1)), BLUE);
+      if (Screen.fein) F2.rect(fx, yy, 1, Math.max(0, y0 * 2 - yy), s.kaestchen || (fx + (yy >> 2)) % 9 ? BLUE : LTBLUE);   // mit Kästchen einfarbig, sonst gehen die Linien unter else if (fx % 2 === 0) Screen.rect(fx >> 1, yy >> 1, 1, Math.max(0, y0 - (yy >> 1)), BLUE);
     }
     plotFn(px => Y(s.kurve((px - L) / (R - L) * (xmax - xmin) + xmin)), L, R, WHITE, T, B);
     Screen.rect(Math.round(X(gr)), T, 1, B - T, YELLOW);
     if (s.fn === 'grenze') Screen.textPx('b', Math.round(X(gr)) + 3, T + 2, YELLOW);
+    if (s.kaestchen) {                           // leicht: grobe Kästchen zum Abzählen (2026-11-20), über der Fläche gut sichtbar
+      const lin = (x, y, w, h) => { if (Screen.fein) F2.rect(x * 2, y * 2, Math.max(1, w * 2), Math.max(1, h * 2), LTGREY); else Screen.rect(x, y, w, h, LTGREY); };
+      for (let x = xmin; x <= xmax + 1e-9; x += (s.gx || 1)) lin(Math.round(X(x)), Math.round(Y(s.ymax)), 0.5, Math.round(Y(0)) - Math.round(Y(s.ymax)));
+      for (let y = 0; y <= s.ymax + 1e-9; y += s.gy) lin(Math.round(X(xmin)), Math.round(Y(y)), Math.round(X(xmax)) - Math.round(X(xmin)), 0.5);
+      const lab = '1 Kästchen = ' + z(s.kaestchen) + ' kWh';
+      Screen.textPx(lab, R - tw(lab), T - 9, LTGREY);                 // über dem Feld rechts, damit nichts von der Fläche verdeckt ist
+    }
     mine = null;
   }
   else if (s.fn === 'parab') mine = x => m.A * (x - m.C) * (x - m.C) + m.D;
   else { const trig = s.fn === 'cos' ? Math.cos : Math.sin; mine = x => m.A * trig(m.B * (x - m.C)) + m.D; }
   if (mine) plotFn(px => Y(mine((px - L) / (R - L) * (xmax - xmin) + xmin)), L, R, YELLOW, T, B);
-  if (s.merk) { Screen.rect(L + 2, T + 1, tw(s.merk) + 6, 10, BLACK); Screen.textPx(s.merk, L + 5, T + 2, LTGREEN); }   // das Ziel bleibt im Bild, auch wenn ein Tipp den Auftrag ersetzt
+  if (s.merk && s.kaestchen) Screen.textPx(s.merk, L, T - 9, LTGREEN);       // mit Kästchen: über dem Feld links
+  else if (s.merk) { Screen.rect(L + 2, T + 1, tw(s.merk) + 6, 10, BLACK); Screen.textPx(s.merk, L + 5, T + 2, LTGREEN); }   // das Ziel bleibt im Bild, auch wenn ein Tipp den Auftrag ersetzt   // das Ziel bleibt im Bild, auch wenn ein Tipp den Auftrag ersetzt
   }
   if (s.fn === 'flut') {                         // kein Regler: Uhr und ein Knopf für den Schieber
     Screen.textPx('t = ' + z(Math.floor(m.A * 10) / 10) + ' min', 20, 136, m.lauf ? YELLOW : WHITE);
@@ -11578,11 +11686,11 @@ function renderFahrt(t, em) {
   // Fahrtenschreiber
   Screen.rect(0, 104, SW, 88, BLACK);
   const tmax = Math.max(24, Math.ceil((em.zeit + 0.01) / 8) * 8);
-  const GX = z => 30 + z / tmax * 270, GY = s => 172 - s * 63 / F.lang;
+  const GX = z => 30 + z / tmax * 270, GY = s => 164 - s * 55 / F.lang;   // seit 2026-11-20 flacher: darunter sitzen Bremse und Gas
   for (let s = F.lang / 3; s <= F.lang + 1e-9; s += F.lang / 3) { for (let px = 30; px <= 300; px += 4) Screen.px(px, Math.round(GY(s)), Math.abs(s - F.tuer) < 1e-9 ? LTRED : DGREY); text5(String(Math.round(s)), 16, Math.round(GY(s)) - 2, Math.abs(s - F.tuer) < 1e-9 ? LTRED : GREY); }
-  Screen.textPx('Tür', 274, Math.round(GY(40)) - 9, LTRED);
-  Screen.rect(30, 108, 1, 65, GREY); Screen.rect(30, 172, 271, 1, GREY);
-  for (let z = 8; z <= tmax; z += 8) { Screen.rect(Math.round(GX(z)), 172, 1, 3, GREY); text5(String(z), Math.round(GX(z)) - 4, 176, GREY); }
+  Screen.textPx('Tür', 282, Math.round(GY(F.tuer)) - 9, LTRED);   // an der Türlinie (stand vorher für 40 m Strecke im Tacho)
+  Screen.rect(30, 108, 1, 57, GREY); Screen.rect(30, 164, 271, 1, GREY);
+  for (let z = 8; z <= tmax; z += 8) { Screen.rect(Math.round(GX(z)), 164, 1, 3, GREY); text5(String(z), Math.round(GX(z)) - 4, 167, GREY); }
   Screen.textPx('s in m', 36, 114, GREY);
   for (let i = 1; i < em.log.length; i++) dick(GX(em.log[i - 1][0]), GY(em.log[i - 1][1]), GX(em.log[i][0]), GY(em.log[i][1]), WHITE);
   if (em.phase === 'fahrt') linie(GX(em.log[em.log.length - 1][0]), GY(em.log[em.log.length - 1][1]), GX(em.zeit), GY(em.s), WHITE);
@@ -11590,19 +11698,19 @@ function renderFahrt(t, em) {
      Zeit mit, bis der Hunt an der Tür ist - dort sieht man, ob der eigene Graph steiler ist. */
   if (em.fehl >= 1 || em.hintN >= 2) { const tz = Math.max(2, em.tTuer !== null ? em.tTuer : em.zeit), d = 2;   // seit 2026-11-19 erst nach dem ersten Fehlversuch (Matthias)
     const x1 = GX(tz - d), x2 = GX(tz + d), y1 = GY(F.tuer - F.vTuer * d), y2 = GY(F.tuer + F.vTuer * d);
-    linie(x1, y1, x2, y1, ORANGE, 2, 106, 172); linie(x2, y1, x2, y2, ORANGE, 2, 106, 172);
-    linie(x1, y1, x2, y2, YELLOW, 0, 106, 172);
+    linie(x1, y1, x2, y1, ORANGE, 2, 106, 164); linie(x2, y1, x2, y2, ORANGE, 2, 106, 164);
+    linie(x1, y1, x2, y2, YELLOW, 0, 106, 164);
     Screen.textPx(ekZahl(F.vTuer) + ' m/s', Math.round(x2) + 4, Math.round(y1) - 4, YELLOW); }
   if (em.phase === 'aus' && em.tTuer !== null) {
     // Tangente an der Tür und Sekante über die ganze Fahrt
-    linie(GX(0), GY(0), GX(em.zeit), GY(F.lang), CYAN, 3, 106, 172);
+    linie(GX(0), GY(0), GX(em.zeit), GY(F.lang), CYAN, 3, 106, 164);
     const d = Math.min(5, tmax / 5);
-    linie(GX(em.tTuer - d), GY(F.tuer - em.vTuer * d), GX(em.tTuer + d), GY(F.tuer + em.vTuer * d), LTRED, 0, 106, 172);
+    linie(GX(em.tTuer - d), GY(F.tuer - em.vTuer * d), GX(em.tTuer + d), GY(F.tuer + em.vTuer * d), LTRED, 0, 106, 164);
     scheibe(Math.round(GX(em.tTuer)), Math.round(GY(F.tuer)), 2, LTRED);
   }
   if (em.phase === 'bereit') {
-    Screen.textPx('Maustaste oder Finger halten:', 44, 133, LTGREY);          // zwischen den beiden Hilfslinien
-    Screen.textPx('schieben. Loslassen: ausrollen.', 44, 142, LTGREY);
+    Screen.textPx('Gas halten: schieben. Bremse: langsamer.', 40, 126, LTGREY);   // zwischen den Hilfslinien
+    Screen.textPx('Nichts drücken: der Hunt rollt aus.', 40, 135, LTGREY);
   }
   if (em.phase === 'aus') {
     // Ablesung oben im Stollen, damit Tangente und Sekante im Fahrtenschreiber frei bleiben
@@ -11617,11 +11725,16 @@ function renderFahrt(t, em) {
       Screen.textPx('Im Schnitt: ' + ekZahl(em.schnitt, 1) + ' m/s', 16, 63, CYAN);
       fazit = em.ok ? 'Geschafft! Tippen: weiter' : (!okT ? 'Zu schnell! Tippen: nochmal' : 'Schnitt unter ' + ekZahl(F.schnittMeister) + '! Nochmal');
     }
-    Screen.textPx(fazit, 4, 182, em.ok ? LTGREEN : YELLOW);
+    Screen.textPx(fazit, 4, 178, em.ok ? LTGREEN : YELLOW);
     hot(0, 8, SW, SH - 16, { ek: 'ok' });
   }
-  Screen.textPx('t in s', 252, 182, GREY);
-  ekFuss(em, 'Halten: schieben');
+  Screen.textPx('t in s', 268, 156, GREY);
+  if (em.phase !== 'aus') {                      // Bremse links, Gas rechts; gehalten leuchten sie
+    const B = FAHRT_KNOPF.brems, G = FAHRT_KNOPF.gas;
+    button(B.x, B.y, B.w, B.h, 'Bremse', { ek: 'fahrtKnopf' }, em.brems ? LTRED : RED, WHITE);
+    button(G.x, G.y, G.w, G.h, 'Gas', { ek: 'fahrtKnopf' }, em.gas ? LTGREEN : GREEN, em.gas ? BLACK : WHITE);
+  }
+  ekFuss(em, 'Gas: Leertaste  Bremse: Pfeil links');
 }
 
 /* ---------------- Minispiel 4: der Neigungsplan ---------------- */
@@ -12802,16 +12915,16 @@ const TIERE = {
   hafen:     [['eule', 45, 72, false]],                   // K1: auf der Kaimauer beim Leuchtturm
   rad:       [['katze', 110, 117, false]],                 // K1: auf der Wiese
   steg:      [['katze', 130, 87, false]],                  // K2: auf dem Steg
-  werkstatt: [['eule', 150, 65, false]],                  // K2: auf der Werkbank
+  werkstatt: [['eule', 150, 75, false]],                  // K2: auf der Werkbank (2026-11-20: saß vorher vor der Wand)
   fischmarkt:[['katze', 250, 100, true]],                 // K2: auf dem Pflaster
   mundloch:  [['hi', 'katze', 316, 224, false]],         // K3: vor dem Mundloch (fein seit 2026-11-18)
-  kartenraum:[['hi', 'eule', 460, 2 * 74 - 2, false]],    // K3: auf dem Kartentisch (fein seit 2026-11-18)
+  kartenraum:[['hi', 'eule', 460, 172, false]],           // K3: auf dem Kartentisch (2026-11-20: hing vorher darüber)
   fuellort:  [['hi', 'katze', 160, 2 * (BGY + 98) + 2, false]],   // K3: an der Schiene (fein seit 2026-11-18)
-  regelstube:[['hi', 'eule', 430, 166, false]],           // K4: auf dem Lesepult
+  regelstube:[['hi', 'eule', 402, 149, false]],           // K4: auf dem Lesepult neben dem Buch (2026-11-20: hing vorher seitlich)
   bude:      [['hi', 'katze', 430, 194, false]],          // K4: auf dem Tisch
-  zoll:      [['hi', 'katze', 560, 230, true]],           // K4: auf dem Steg
+  zoll:      [['hi', 'katze', 560, 170, true]],           // K4: auf dem Steg (2026-11-20: stand vorher im Wasser)
   leuchtturm:[['hi', 'eule', 600, 158, true]],            // K5: auf den Felsen
-  baumschule:[['hi', 'eule', 169, 136, false], ['hi', 'katze', 520, 232, true]]   // K5: Eule im Baum, Kater am Zaun
+  baumschule:[['hi', 'eule', 169, 150, false], ['hi', 'katze', 520, 232, true]]   // K5: Eule im Baum, Kater am Zaun
 };
 (function () {
   for (const name in TIERE) {
@@ -14212,6 +14325,8 @@ const KAPITEL = {
 
 let hidden = null;         // unsichtbares Eingabefeld für die Handytastatur
 
+/* Längster Code samt Sammelcode-Kopf: K4 lang hat 97 Zeichen (2026-11-20); vorher schnitt das Feld bei 40 ab */
+const CODE_MAX = 300;
 function focusHidden(val, maxLen) {
   if (!hidden) return;
   hidden.maxLength = maxLen || 14;
@@ -14227,7 +14342,7 @@ function blurHidden() { if (hidden) { hidden.blur(); hidden.style.display = 'non
    der Beruehrung fokussiert wird. Die normale Verarbeitung laeuft aber erst im
    naechsten Bild. syncTap wird deshalb direkt aus dem Touch-Ereignis gerufen und
    fokussiert das Feld sofort, wenn der Tipp zu einer Eingabe fuehren wird. */
-function syncTap(p) {
+function syncTap(p, ende) {
   if (!hidden) return;
   let a = null;
   for (let i = HOTPREV.length - 1; i >= 0; i--) {
@@ -14243,10 +14358,22 @@ function syncTap(p) {
     needs = (a.menu === 0 && !sv) || (a.menu === 1 && sv) || a.menu === 2;
     if (needs && a.menu !== 2 && Game.chapter.handyHinweis && istHandy() && !Game.handyGesehen) needs = false;   // erst kommt der Hinweis
   }
-  if (needs && document.activeElement !== hidden) {
-    hidden.style.display = 'block';
-    try { hidden.focus(); } catch (e) {}
-  }
+  if (!needs) return;
+  // Beim Aufsetzen nur fokussieren, wenn das Feld noch nicht fokussiert ist. Beim Loslassen (ende) immer neu
+  // fokussieren, außer die Tastatur ist sichtbar offen: iOS öffnet die Tastatur nur beim Loslassen, und ein Feld,
+  // das schon beim Aufsetzen oder im nächsten Bild fokussiert wurde (oder nach „Fertig" fokussiert blieb), bekommt
+  // sonst keine Tastatur (Rückmeldung der Studierenden, 2026-11-20: „öffnet sich nicht immer").
+  if (ende) {
+    if (document.activeElement === hidden && tastaturOffen()) return;
+    try { hidden.blur(); } catch (e) {}
+  } else if (document.activeElement === hidden) return;
+  hidden.style.display = 'block';
+  try { hidden.focus(); } catch (e) {}
+}
+/* Tastatur sichtbar? Die sichtbare Fläche schrumpft dann deutlich (iOS und Android). */
+function tastaturOffen() {
+  const vv = window.visualViewport;
+  return !!(vv && vv.height < window.innerHeight * 0.8);
 }
 
 /* ---- Ergebnis-Code zum Kopieren und Verschicken ---- */
@@ -14324,8 +14451,10 @@ function act(a) {
   if (a.focusName) { focusHidden(Game.nameBuf, 12); return; }
   if (a.nameOk) { if (Game.mode === 'name') nameFertig(); return; }
   if (a.handyOk) { if (Game.mode === 'handy') { Game.mode = 'name'; focusHidden(Game.nameBuf, 12); } return; }
-  if (a.tfield !== undefined) { Game.tField = a.tfield; focusHidden(a.tfield ? Game.tCode : Game.tName, a.tfield ? 40 : 20); return; }
+  if (a.tfield !== undefined) { Game.tField = a.tfield; focusHidden(a.tfield ? Game.tCode : Game.tName, a.tfield ? CODE_MAX : 20); return; }
   if (a.check) { checkCode(); return; }
+  if (a.miniWahl !== undefined) { if (Game.view === 'mini' && Game.mini && Game.mini.waehle) Game.miniStufe(a.miniWahl); return; }
+  if (a.tipMehr) { Game.tipMehr = !Game.tipMehr; Sound.sfx('move'); return; }   // Fehlerbildschirm: ausführlich / kurz
 
   if (Game.mode !== 'play') return;
   if (a.ek !== undefined) { ekAct(a); return; }
@@ -14452,11 +14581,11 @@ function onKey(k) {
 
   if (Game.mode === 'teacher') {
     if (k === 'Escape') { Game.mode = 'title'; blurHidden(); return; }
-    if (k === 'Tab') { Game.tField = 1 - Game.tField; focusHidden(Game.tField ? Game.tCode : Game.tName, Game.tField ? 40 : 20); return; }
+    if (k === 'Tab') { Game.tField = 1 - Game.tField; focusHidden(Game.tField ? Game.tCode : Game.tName, Game.tField ? CODE_MAX : 20); return; }
     if (k === 'Enter') { act({ check: true }); return; }
     const fld = Game.tField === 0 ? 'tName' : 'tCode';
     if (k === 'Backspace') Game[fld] = Game[fld].slice(0, -1);
-    else if (k.length === 1 && Game[fld].length < (Game.tField ? 40 : 20)) Game[fld] += k;
+    else if (k.length === 1 && Game[fld].length < (Game.tField ? CODE_MAX : 20)) Game[fld] += k;
     return;
   }
 
@@ -14465,6 +14594,14 @@ function onKey(k) {
   if (Game.mode !== 'play') return;
 
   if (k === 'q' || k === 'Q') { Game.save(); Game.finish(0); return; }
+  if (Game.view === 'mini' && Game.mini && Game.mini.waehle) {             // leicht oder schwer wählen
+    if (k === '1' || k === 'ArrowLeft' || k === 'ArrowUp') Game.mini.wsel = 0;
+    if (k === '2' || k === 'ArrowRight' || k === 'ArrowDown') Game.mini.wsel = 1;
+    if (k === '1' || k === '2' || k === 'Enter' || k === ' ') Game.miniStufe(Game.mini.wsel || 0);
+    else Sound.sfx('move');
+    return;
+  }
+  if ((k === 'a' || k === 'A') && Game.taskPhase === 'tip' && Game.task && Game.task.mehr && Game.task.mehr.length) { act({ tipMehr: true }); return; }
   if ((k === 'z' || k === 'Z') && zurueck()) return;                  // zurück (69_zurueck.js)
   if (Game.isEk() && ekKey(k)) return;
   if ((k === 'k' || k === 'K') && (Game.view === 'task' || Game.view === 'mini')) { Game.abortTask(); return; }
@@ -14495,6 +14632,7 @@ function onKey(k) {
     if (Game.view === 'boss') { if (Game.boss.phase === 'fb' || Game.boss.phase === 'dreh') Game.bossNext(); return; }
     if (Game.view === 'gabe') { Game.gabeDone(); return; }
     if (Game.view === 'mini') {
+      if (Game.mini && Game.mini.waehle) { Game.miniStufe(Game.mini.wsel || 0); return; }
       if (Game.taskPhase === 'ask' && Game.task.fn === 'flut') Game.flutTaste();
       else if (Game.taskPhase === 'ask') Game.miniCheck();
       else if (Game.taskPhase === 'fb') Game.afterFeedback();
@@ -14590,7 +14728,8 @@ function frame(ts) {
     if (w && w.talking && w.typed < w.talking.text.length) { w.typed += dt * 60; if (Math.random() < 0.2) Sound.sfx('tick'); }
   }
   if (Game.mode === 'play' && Game.view === 'emini' && Game.em && Game.em.kind === 'fahrt')
-    Game.ekFahrtUpdate(dt, !!(Input.keys[' '] || Input.keys['ArrowRight'] || (Input.down && Input.pointer && Input.pointer.y < SH - 10)));
+  { const p = Input.down && Input.pointer, br = !!(Input.keys['ArrowLeft'] || Input.keys['ArrowDown'] || (p && fahrtKnopf(p, 'brems')));
+    Game.ekFahrtUpdate(dt, !br && !!(Input.keys[' '] || Input.keys['ArrowRight'] || (p && p.y < SH - 10)), br); }
   // Pendel: Solange Finger oder Maustaste im Bild liegen, folgt die gelbe Markierung (in Schritt 1 der ganze Messhunt).
   // Rastet der Hunt beim Ziehen ein, wartet Schritt 2, bis einmal losgelassen wurde - sonst spränge die gelbe Achse zum Finger.
   if (Game.mode === 'play' && Game.view === 'emini' && Game.em && Game.em.kind === 'pendel' && Game.em.warteLos && !Input.down) Game.em.warteLos = false;
@@ -14676,7 +14815,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (Game.mode === 'name') Game.nameBuf = v.substr(0, 12);
     else if (Game.mode === 'teacher') {
       if (Game.tField === 0) Game.tName = v.substr(0, 20);
-      else Game.tCode = v.toUpperCase().substr(0, 40);
+      else Game.tCode = v.toUpperCase().substr(0, CODE_MAX);
     }
   });
   hidden.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); onKey('Enter'); } });
